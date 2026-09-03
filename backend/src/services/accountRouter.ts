@@ -1,5 +1,5 @@
 import NodeCache from 'node-cache';
-import { getActiveAccounts, getActiveAccountsByFeature, Account, AccountFeature, hasFeature } from '../models/account';
+import { getActiveAccounts, getActiveAccountsByFeature, Account, AccountFeature } from '../models/account';
 import { getCfClient } from './cfFactory';
 import { getAccountQuota, ResourceType } from './quotaTracker';
 import { getQuotaTodayByResource } from '../models/quotaUsage';

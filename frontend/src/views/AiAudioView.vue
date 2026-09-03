@@ -18,6 +18,7 @@
           :loading="modelsLoading"
           size="small"
           filterable
+          :render-label="renderModelLabel"
         />
       </div>
 
@@ -137,6 +138,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
+import { renderPaidModelLabel } from '../utils/paidLabel';
 import { useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import { accountsApi } from '../api/accounts';
@@ -158,7 +160,16 @@ const accountOptions = ref<{ label: string; value: string }[]>([]);
 const selectedModel = ref('');
 // 保存完整模型元数据（后端下发的 speakers / default_speaker / advanced_params），供选择说话人与高级设置使用
 const modelMeta = ref<Record<string, { speakers?: string[]; default_speaker?: string; advanced_params?: Record<string, any> }>>({});
-const modelOptions = ref<{ label: string; value: string }[]>([]);
+const modelOptions = ref<{ label: string; value: string; requirePaid?: boolean }[]>([]);
+// 付费模型 value 集合
+const paidModelValues = computed(() => new Set(
+  modelOptions.value.filter((o) => o.requirePaid).map((o) => o.value)
+));
+
+// naive-ui n-select 的 render-label 是函数 prop（不是 slot），须返回 VNode/字符串
+function renderModelLabel(option: any) {
+  return renderPaidModelLabel(option, !!option.value && paidModelValues.value.has(option.value));
+}
 const modelsLoading = ref(false);
 const inputText = ref('');
 const selectedVoice = ref('');
@@ -254,6 +265,7 @@ async function fetchModels() {
         return {
           label: (m.id || m.name || '').replace(/^@cf\//, ''),
           value: m.id || m.name,
+          requirePaid: !!m.require_workers_paid,
         };
       });
       modelOptions.value = models;

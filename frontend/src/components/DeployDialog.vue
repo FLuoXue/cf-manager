@@ -208,7 +208,13 @@ async function retryAccount(r: any) {
   r.retrying = true;
   try {
     const opts: any = { vars: vars.value, bindings: allBindings.value, isRedeploy: isRedeploy.value };
-    if (scriptFile.value) { deployType.value === 'worker' ? opts.script = scriptFile.value : opts.zipFile = scriptFile.value; }
+    if (scriptFile.value) {
+      if (deployType.value === 'worker') {
+        opts.script = scriptFile.value;
+      } else {
+        opts.zipFile = scriptFile.value;
+      }
+    }
     const target = [{ accountId: r.accountId, workerName: name.value.trim() }];
     const { data } = deployType.value === 'worker'
       ? await workersApi.batchDeploy(target, opts)

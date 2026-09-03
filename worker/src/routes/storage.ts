@@ -18,6 +18,10 @@ async function requireAccount(c: any) {
 
 const acctPath = (a: any) => `/accounts/${a.account_id}`;
 
+// P1-12/13: KV 命名空间列表 TTL 缓存（避免每次刷新都打 CF；创建/删除后 60s 内可见）
+const KV_LIST_TTL_MS = 60 * 1000;
+const kvListCache = new Map<string, { data: any[]; fetchedAt: number }>();
+
 function extractD1QueryResult(data: any): any {
   const firstResult = Array.isArray(data.result) ? data.result[0] : data;
   return firstResult?.results ?? [];
@@ -26,8 +30,15 @@ function extractD1QueryResult(data: any): any {
 // ============ KV Namespaces ============
 app.get('/:accountId/kv', async (c) => {
   const account = await requireAccount(c);
+  const cacheKey = String(account.id);
+  const cached = kvListCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < KV_LIST_TTL_MS) {
+    return c.json(cached.data);
+  }
   const data = await cfFetch<{ result: any[] }>(account, `${acctPath(account)}/storage/kv/namespaces`, c.env.ENCRYPTION_KEY);
-  return c.json(data.result || []);
+  const list = data.result || [];
+  kvListCache.set(cacheKey, { data: list, fetchedAt: Date.now() });
+  return c.json(list);
 });
 
 app.post('/:accountId/kv', async (c) => {
@@ -38,6 +49,7 @@ app.post('/:accountId/kv', async (c) => {
     method: 'POST', body: JSON.stringify({ title }),
   });
   await addAuditLog(c.env.DB, { account_id: account.id, action: 'create_kv', target: title, status: 'success' });
+  kvListCache.delete(String(account.id));
   return c.json(result, 201);
 });
 
@@ -45,6 +57,7 @@ app.delete('/:accountId/kv/:nsId', async (c) => {
   const account = await requireAccount(c);
   await cfFetch(account, `${acctPath(account)}/storage/kv/namespaces/${c.req.param('nsId')}`, c.env.ENCRYPTION_KEY, { method: 'DELETE' });
   await addAuditLog(c.env.DB, { account_id: account.id, action: 'delete_kv', target: c.req.param('nsId'), status: 'success' });
+  kvListCache.delete(String(account.id));
   return c.json({ success: true });
 });
 

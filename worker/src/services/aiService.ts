@@ -30,12 +30,25 @@ export async function getModelInputSchema(
   account: Account,
   model: string,
   encryptionKey: string,
+  kv?: any,
 ): Promise<ModelInputSchema | null> {
   if (!account.account_id || !model) return null;
   const key = `${account.account_id}::${model}`;
   const cached = inputSchemaCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < SCHEMA_TTL_MS) {
     return cached.schema;
+  }
+
+  // P1-13: L2 共享缓存（KV），跨 Worker 实例复用、冷启动免重复 CF 调用
+  const kvKey = `model-schema:${key}`;
+  if (kv) {
+    try {
+      const kvRaw = await kv.get(kvKey, 'json') as { schema: ModelInputSchema | null; fetchedAt: number } | null;
+      if (kvRaw && kvRaw.schema !== undefined && Date.now() - kvRaw.fetchedAt < SCHEMA_TTL_MS) {
+        inputSchemaCache.set(key, kvRaw);
+        return kvRaw.schema;
+      }
+    } catch { /* KV 不可用时降级为内存/直连 CF */ }
   }
 
   let result: ModelInputSchema | null = null;
@@ -53,10 +66,16 @@ export async function getModelInputSchema(
       };
     }
   } catch (err: any) {
-    logger.warn(`[AI ModelSchema] 获取模型 ${model} 的 input schema 失败: ${err?.message || err}`);
+    logger.warn('aiService', `[AI ModelSchema] 获取模型 ${model} 的 input schema 失败: ${err?.message || err}`);
   }
 
-  inputSchemaCache.set(key, { schema: result, fetchedAt: Date.now() });
+  const entry = { schema: result, fetchedAt: Date.now() };
+  inputSchemaCache.set(key, entry);
+  if (kv) {
+    try {
+      await kv.put(kvKey, JSON.stringify(entry), { expirationTtl: Math.ceil(SCHEMA_TTL_MS / 1000) });
+    } catch { /* KV 写入失败不影响主流程 */ }
+  }
   return result;
 }
 
@@ -67,8 +86,9 @@ export async function getModelSpeakerEnum(
   account: Account,
   model: string,
   encryptionKey: string,
+  kv?: any,
 ): Promise<{ speakers: string[]; defaultSpeaker?: string } | null> {
-  const schema = await getModelInputSchema(account, model, encryptionKey);
+  const schema = await getModelInputSchema(account, model, encryptionKey, kv);
   const speakerProp = schema?.properties?.speaker;
   if (speakerProp && Array.isArray(speakerProp.enum)) {
     return { speakers: speakerProp.enum, defaultSpeaker: speakerProp.default };
@@ -200,4 +220,24 @@ export function buildTtsCfBody(
   }
 
   return { body, speaker };
+}
+
+/**
+ * 判断模型是否需要付费 Workers AI 计划。
+ * Cloudflare 模型元数据（/ai/models/search）两种标记方式：
+ *  1. properties 数组里的 { property_id: 'require_workers_paid', value: 'true' }（注意 value 是字符串而非布尔）
+ *  2. 顶层字段 require_workers_paid（布尔或字符串）
+ * 注意：不要用 price/价格做兜底——CF 上几乎所有模型都带价格（按 neurons 计费，
+ * 超出每日免费额度才收费），价格存在 ≠ 需要付费计划账号。只有 require_workers_paid
+ * 标记才表示"仅限 Workers Paid 计划账号调用"。
+ */
+function isTruthyValue(v: any): boolean {
+  return v === true || v === 'true' || v === 1 || v === '1';
+}
+
+export function modelRequiresWorkersPaid(m: any): boolean {
+  const props = Array.isArray(m?.properties) ? m.properties : [];
+  if (props.some((p: any) => p?.property_id === 'require_workers_paid' && isTruthyValue(p?.value))) return true;
+  if (isTruthyValue(m?.require_workers_paid)) return true;
+  return false;
 }

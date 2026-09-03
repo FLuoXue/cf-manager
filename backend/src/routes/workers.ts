@@ -59,7 +59,7 @@ function toAssetsOptions(file?: Express.Multer.File): { assets: WorkerAssetsInpu
 }
 
 // 从 multipart 表单中解析 JSON 字符串字段；空/非法返回空数组
-function parseJsonField(raw: unknown, field: string): any {
+function parseJsonField(raw: unknown, _field: string): any {
   if (raw === undefined || raw === null || raw === '') return [];
   if (typeof raw === 'string') { try { return JSON.parse(raw); } catch { return []; } }
   return raw;
@@ -525,7 +525,7 @@ router.get('/usage', async (_req: Request, res: Response, next: NextFunction) =>
 // ============ Batch Deploy ============
 router.post('/batch-deploy', uploadWorkerAssets.fields([{ name: 'script' }, { name: 'assets' }]), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { targets, url: scriptUrl } = req.body;
+    const { url: scriptUrl } = req.body;
     const files = req.files as { script?: Express.Multer.File[]; assets?: Express.Multer.File[] };
     const assetsOpts = toAssetsOptions(files.assets?.[0]);
     const scriptFile = files.script?.[0];

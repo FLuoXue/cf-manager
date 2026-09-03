@@ -15,7 +15,6 @@ const app = new Hono<{ Bindings: Env }>();
  */
 app.get('/usage', async (c) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
     const encryptionKey = c.env.ENCRYPTION_KEY;
     const allAccounts = await getActiveAccounts(c.env.DB);
     const accounts = allAccounts.filter(a => a.account_id) as Account[];

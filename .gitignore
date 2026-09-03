@@ -18,6 +18,7 @@ backups/
 .superpowers
 docs/specs
 docs/superpowers/
+docs/review/
 reg/
 worker/public/
 worker/cf-manager.zip

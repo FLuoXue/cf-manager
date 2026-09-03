@@ -4,8 +4,6 @@ import { ManualVarInput } from './bindings';
 import { proxyFetch, buildCurlCommand } from './proxyService';
 import { fetchScriptSafely } from './ssrfGuard';
 import { getAllZones } from './accountRouter';
-import path from 'path';
-import { File } from 'node:buffer';
 import { appLogger } from './logger';
 import { computeStaticAssetHash, getContentType, extractZipFiles } from './staticAssets';
 export { extractZipFiles };
@@ -714,7 +712,7 @@ export async function addPagesDomain(account: Account, projectName: string, host
     // Real subdomain format: {projectName}.{accountSubdomain}.pages.dev
     pagesSubdomain = projectInfo.subdomain || `${projectName}.pages.dev`;
     appLogger.info(`[Pages Domain] Real subdomain: ${pagesSubdomain}`);
-  } catch (e) {
+  } catch (_e) {
     // Fallback to old format if API fails
     pagesSubdomain = `${projectName}.pages.dev`;
     appLogger.warn(`[Pages Domain] Failed to get project info, using fallback: ${pagesSubdomain}`);
@@ -846,12 +844,21 @@ export async function batchDeletePagesDeployments(
 }
 
 // ============ Cloudflare Resources (for Pages bindings) ============
+// P1-12/13: KV 命名空间列表 TTL 缓存（单进程内存；创建/删除后至多 60s 内可见，避免每次刷新打 CF）
+const KV_LIST_TTL_MS = 60 * 1000;
+const kvListCache = new Map<string, { data: any[]; fetchedAt: number }>();
 export async function listKvNamespaces(account: Account): Promise<any[]> {
+  const cacheKey = String(account.account_id);
+  const cached = kvListCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < KV_LIST_TTL_MS) {
+    return cached.data;
+  }
   const cf = getCfClient(account);
   const items: any[] = [];
   for await (const ns of cf.kv.namespaces.list({ account_id: account.account_id! })) {
     items.push(ns);
   }
+  kvListCache.set(cacheKey, { data: items, fetchedAt: Date.now() });
   return items;
 }
 

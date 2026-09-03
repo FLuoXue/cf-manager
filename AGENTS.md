@@ -166,7 +166,7 @@ chmod +x deploy.sh && ./deploy.sh
 4. **Cloudflare API 调用**：backend 通过 `cloudflare` SDK（`getCfClient()`），worker 通过 `fetch` 封装（`cfFetch()`）
 5. **前端 base 路径**：Worker 版固定为 `/admin/`，Docker 版固定为 `/`（单容器 all-in-one）
 6. **提交前检查**：确保两端（backend + worker）功能同步，`CHANGELOG.md` 已更新版本号
-7. **D1 数据库迁移**：GitHub Actions 部署时自动执行 `schema.sql`（建表）+ `migrations.sql`（列级迁移），新增列只需编辑 `worker/src/db/migrations.sql`，无需修改 `deploy-cf.yml`。Docker 版（SQLite）通过 `initDb()` 在启动时自动迁移
+7. **数据库迁移（版本化 + `_migrations` 记录）**：新增表 → 编辑 `worker/src/db/schema.sql`（当前完整 schema 的单一真相源），**同时** backend `src/db.ts` 的 base CREATE 也要同步加同一张表/列（`ci.yml` 的 `schema-check` 会比对双端共享表列集合，不一致则阻断合并）。新增/改列等演进 → 在 `worker/src/db/migrations/` 新增带版本号的 `.sql`（如 `0009_xxx.sql`），由 `worker/scripts/migrate.mjs` 部署时按序应用并记录到 D1 的 `_migrations` 表（每条仅一次）；backend 侧在 `src/db.ts` 的 `MIGRATIONS` 数组追加 `ADD COLUMN IF NOT EXISTS ...` 幂等语句。
 
 ## 功能场景索引
 
@@ -221,7 +221,7 @@ chmod +x deploy.sh && ./deploy.sh
 | 任务 | Docker 版 (backend/) | Worker 版 (worker/) |
 |---|---|---|
 | 建表/初始化 | `src/db.ts` | `src/db/schema.sql` |
-| 列级迁移 | `src/db.ts`（`initDb` 内联） | `src/db/migrations.sql` |
+| 列级迁移 | `src/db.ts` 的 `MIGRATIONS` 数组（幂等 `ADD COLUMN IF NOT EXISTS`） | `src/db/migrations/*.sql`（由 `scripts/migrate.mjs` 应用） |
 | 数据模型/查询 | `src/models/account.ts` | `src/db/models.ts`（集中） |
 | 审计日志 | `src/models/auditLog.ts` | `src/db/models.ts` |
 | 配额使用 | `src/models/quotaUsage.ts` | `src/db/models.ts` |
@@ -285,7 +285,7 @@ chmod +x deploy.sh && ./deploy.sh
 | Docker Compose | `docker-compose.yml` |
 | Docker 部署脚本 | `deploy.sh` |
 | Docker 镜像发布 | `.github/workflows/docker-publish.yml` |
-| D1 数据库迁移脚本 | `worker/src/db/migrations.sql` |
+| D1 数据库迁移脚本 | `worker/src/db/migrations/*.sql` + `worker/scripts/migrate.mjs` |
 | All-in-One Dockerfile | `docker/Dockerfile` |
 | 后端环境变量 | `backend/src/config.ts` |
 | Worker 环境变量/Binding | `worker/src/types.ts` + `worker/wrangler.toml` |

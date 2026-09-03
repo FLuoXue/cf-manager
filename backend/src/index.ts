@@ -29,6 +29,7 @@ import { initBrowserRateLimiter } from './services/browserRateLimiter';
 import { v1RequestLogger } from './middleware/v1Logger';
 import { apiRequestLogger } from './middleware/apiLogger';
 import { requestIdMiddleware } from './middleware/requestId';
+import { canonicalizeMiddleware } from './middleware/canonicalize';
 import { appLogger } from './services/logger';
 import cron from 'node-cron';
 import { getEnabledCatalogSources } from './models/catalogSource';
@@ -43,6 +44,10 @@ app.use(cors({
   credentials: false,
 }));
 app.use(express.json({ limit: '100mb' }));
+
+// 路径规范化（P1-4）：在 auth 与路由匹配之前改写 req.url，确保 Docker/Worker 两端对
+// 双斜杠/尾部斜杠/大小写变形路径的匹配结果一致，避免绕过或 404/500 差异。
+app.use(canonicalizeMiddleware);
 
 // Health check — before auth so Docker healthcheck works without API_SECRET
 app.get('/api/health', (_req, res) => {

@@ -1,9 +1,6 @@
 import { Account } from '../../models/account';
-import { getDeployHeaders } from './headers';
 import { getCfClient } from '../cfFactory';
 import { appLogger } from '../logger';
-
-const CF_BASE = 'https://api.cloudflare.com/client/v4';
 
 /**
  * 部署触发器 — Cron Schedules + Custom Routes。

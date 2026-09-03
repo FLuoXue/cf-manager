@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import {
   getCatalogSources, getEnabledCatalogSources, getCatalogSourceById,
   createCatalogSource, updateCatalogSource, deleteCatalogSource,
-  ensureDefaultCatalogSource, getDefaultCatalogSource,
+  ensureDefaultCatalogSource,
 } from '../db/models';
 import { validateCatalog, type Catalog, type CatalogTemplate } from '../services/catalogValidator';
 import { deployTemplate, preflightDeploy } from '../services/catalogDeploy';

@@ -1,4 +1,4 @@
-import { getActiveAccounts, getActiveAccountsByFeature, hasFeature, getAllQuotaToday, setQuota, incrementQuota, getQuotaByAccount, getQuotaTodayByResource, getAccountById, clearExhausted, setExhausted, addOptimisticD1, clearOptimisticD1, getOptimisticMapD1, getSetting, setSetting, type Account, type AccountFeature } from '../db/models';
+import { getActiveAccounts, getActiveAccountsByFeature, hasFeature, getAllQuotaToday, setQuota, incrementQuota, getQuotaByAccount, getQuotaTodayByResource, addOptimisticD1, clearOptimisticD1, getOptimisticMapD1, getSetting, setSetting, type Account, type AccountFeature } from '../db/models';
 import type { Env } from '../types';
 import { cfGraphQL } from './cfApi';
 import { logger } from './logger';
@@ -78,7 +78,7 @@ export async function syncUsageFromCloudflare(db: D1Database, encryptionKey: str
   }));
 }
 
-export async function getQuotaSummary(db: D1Database, encryptionKey: string) {
+export async function getQuotaSummary(db: D1Database, _encryptionKey: string) {
   const accounts = await getActiveAccounts(db);
   const usage = await getAllQuotaToday(db);
   const resourceTypes = Object.keys(LIMITS) as ResourceType[];
@@ -132,7 +132,11 @@ async function getAiSnapshot(env: Env): Promise<Array<AiKvEntry & { _account?: A
 }
 
 export async function invalidateAiCache(env: Env): Promise<void> {
-  if (env.KV) await env.KV.delete(KV_KEY);
+  // P1-12: 快照本身已有 KV_TTL(60s) 的 TTL 缓存；此前每次调用整体删除快照，
+  // 导致下次 selectBestAccount 重建（DB 查询 + 排序）放大开销。改为依赖 TTL 自动过期，
+  // 不再整体失效（如需立即刷新可调用 getAiSnapshot(env) 直接写回）。保留空实现以兼容调用点。
+  void env;
+  return;
 }
 
 export async function clearOptimistic(env: Env, accountId: number): Promise<void> {

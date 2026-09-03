@@ -248,7 +248,7 @@ app.patch('/domains/:domain/settings', async (c) => {
         method: 'PATCH', body: JSON.stringify({ value }),
       });
       updated.push(key);
-    } catch (e) {
+    } catch (_e) {
       failed.push(key);
     }
   }

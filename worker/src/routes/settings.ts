@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { getSetting, setSetting } from '../db/models';
 import { VERSION, GIT_COMMIT } from '../version';
 
 const app = new Hono<{ Bindings: Env }>();

@@ -227,7 +227,7 @@ cf-manager/
 │   │   ├── pages/           # 伪装 nginx 页面
 │   │   ├── routes/          # API 路由（与 backend 对称）
 │   │   ├── services/        # 业务逻辑（fetch 调用 CF API）
-│   │   ├── db/              # D1 模型 + schema.sql / migrations.sql
+│   │   ├── db/              # D1 模型 + schema.sql / migrations/（版本化迁移）
 │   │   └── middleware/      # 认证、错误处理、响应包装
 │   ├── build.js             # 一键构建脚本
 │   └── wrangler.toml        # Wrangler 配置

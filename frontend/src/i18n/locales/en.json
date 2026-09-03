@@ -553,6 +553,7 @@
     "steps": "Steps",
     "guidance": "Guidance",
     "strength": "Strength",
+    "seed": "Seed",
     "negativePrompt": "Negative Prompt",
     "negativePromptPlaceholder": "What you don't want in the image..."
   },

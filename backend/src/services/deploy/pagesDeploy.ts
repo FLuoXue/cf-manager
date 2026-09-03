@@ -1,6 +1,6 @@
 import { Account } from '../../models/account';
 import { getDeployHeaders } from './headers';
-import { computeStaticAssetHash, getContentType, extractZipFiles } from '../staticAssets';
+import { computeStaticAssetHash, getContentType } from '../staticAssets';
 import { appLogger } from '../logger';
 import { proxyFetch } from '../proxyService';
 

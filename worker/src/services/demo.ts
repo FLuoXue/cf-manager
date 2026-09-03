@@ -1,5 +1,3 @@
-import type { Env } from '../types';
-
 // 判断某个账户是否为演示（Demo）保护账户
 export function isDemoAccount(id: number, demoIds: string | undefined): boolean {
   if (!demoIds) return false;

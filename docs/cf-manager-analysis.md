@@ -465,7 +465,7 @@ Worker 端 `encryption.ts` 用 `@noble/hashes` 实现等价逻辑，保证两端
 - **改模型定价/新增 AI 模型**：只改 `shared/model-pricing.json`，再跑 `node scripts/sync-shared.js`。
 - **新增 Catalog 模板**：编辑 `shared/catalog.schema.json` + `catalogValidator.ts`（源码），重跑生成器。
 - **改 UI**：`frontend/src/views/` + 对应 `stores/` + `api/`；注意 Worker 版 `BASE_URL=/admin/`、Docker 版 `/`。
-- **加数据库列**：Docker 改 `backend/src/db.ts` 的 `initDb`；Worker 改 `worker/src/db/migrations.sql`（GitHub Actions 部署自动执行）。
+- **加数据库列**：Docker 改 `backend/src/db.ts` 的 `MIGRATIONS` 数组（幂等 `ADD COLUMN IF NOT EXISTS`）；Worker 在 `worker/src/db/migrations/` 新增带版本号的 `.sql`，由 `worker/scripts/migrate.mjs` 部署时应用；两处都要改（`ci.yml` 的 `schema-check` 比对双端共享表列集合，不一致则阻断合并）。
 - **改部署配置**：Docker 看 `docker/Dockerfile` + `docker-compose.yml` + `deploy.sh`；Worker 看 `worker/wrangler.toml` + `.github/workflows/deploy-cf.yml`。
 
 ### 6.4 推荐搜索关键词
@@ -628,7 +628,7 @@ deployWorker(account, name, scriptContent, options)
 
 | 项 | Docker (SQLite) | Worker (D1) |
 |----|-----------------|-------------|
-| 迁移方式 | `db.ts` 的 `initDb()` 启动时自动建表 | `schema.sql` 建表 + `migrations.sql` 列级迁移（部署时自动执行） |
+| 迁移方式 | `db.ts` 的 base CREATE 建表 + `MIGRATIONS` 数组幂等迁移（`_migrations` 记录） | `schema.sql` 建表（当前完整 schema 单一真相源）+ `migrations/*.sql` 由 `migrate.mjs` 版本化应用（`_migrations` 记录） |
 | 定时任务 | `scheduled_tasks`/`task_executions` 持久化 | 无表，由 Pages `scheduled` handler 替代 |
 | 配额字段 | 接口 `QuotaUsage` 未声明 `optimistic` 列 | `quota_usage` 含 `optimistic` 列（`schema.sql:25`），为后续乐观锁预留 |
 | 查询风格 | `better-sqlite3` 同步 `prepare().all()` | D1 异步 `prepare().all()`，需在 `async` 函数中 `await` |

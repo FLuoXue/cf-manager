@@ -10,14 +10,14 @@ import { proxyFetch } from '../proxyService';
 import { createAuditLog } from '../../models/auditLog';
 import type { CatalogTemplate, CatalogBinding } from '../catalogValidator';
 import { appLogger } from '../logger';
-import { extractZipFiles, validatePagesProjectName, ensurePagesProject, resolveMainModule } from '../workerService';
+import { extractZipFiles, validatePagesProjectName, resolveMainModule } from '../workerService';
 
 import { preflight } from './preflight';
 import { deployWorker } from './workerDeploy';
 import { deployPages } from './pagesDeploy';
 import { deployTriggers } from './triggers';
 import type { PreflightParams, PreflightResult, DeployResult, ResolvedBinding } from './types';
-import type { CfModule, CfModuleType, Migration, Placement, TailConsumer, Limits } from './types';
+import type { Migration, Placement, TailConsumer, Limits } from './types';
 
 // ---- Types ----
 
@@ -226,7 +226,6 @@ function buildPagesDeploymentConfigs(template: CatalogTemplate, resolvedBindings
     }
   }
 
-  const hasResourceBindings = resolvedBindings.some(rb => ['kv', 'd1', 'r2'].includes(rb.type));
   // CF Pages PATCH 部署配置的字段格式（来自 wrangler 源码确认）：
   //   kv_namespaces: Record<string, { namespace_id: string }>
   //   d1_databases:   Record<string, { id: string }>

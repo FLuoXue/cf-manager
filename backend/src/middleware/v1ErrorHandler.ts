@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { appLogger } from '../services/logger';
-import { AppError } from './errorHandler';
 
 /**
  * Error handler for OpenAI-compatible routes (/v1, /api/v1).

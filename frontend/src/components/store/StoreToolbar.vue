@@ -44,7 +44,7 @@ import { Star, StarOutline } from '@vicons/ionicons5';
 
 const { t } = useI18n();
 
-const props = defineProps<{
+defineProps<{
   searchText: string;
   sortBy: 'name' | 'version';
   favOnly: boolean;

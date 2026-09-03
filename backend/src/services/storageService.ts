@@ -139,7 +139,7 @@ export async function getR2Object(account: Account, bucketName: string, key: str
   return cf.r2.buckets.objects.get(bucketName, key, { account_id: acctId(account) }) as unknown as Response;
 }
 
-export async function putR2Object(account: Account, bucketName: string, key: string, body: Buffer, contentType?: string): Promise<void> {
+export async function putR2Object(account: Account, bucketName: string, key: string, body: Buffer, _contentType?: string): Promise<void> {
   const cf = getCfClient(account);
   await cf.r2.buckets.objects.upload(bucketName, key, body, { account_id: acctId(account) });
 }

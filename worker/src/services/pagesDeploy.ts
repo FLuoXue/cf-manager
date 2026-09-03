@@ -20,12 +20,6 @@ export async function ensurePagesProject(account: Account, encryptionKey: string
   }
 }
 
-// 演示/特殊文件：不进 manifest，单独作为 multipart 字段上传
-const SPECIAL_FILES = new Set([
-  '_worker.js', '_worker.bundle', '_headers', '_redirects',
-  '_routes.json', 'functions-filepath-routing-config.json',
-]);
-
 // ============ Pages 部署：wrangler 四步上传法 ============
 export interface DeployPageFile { path: string; buffer: Uint8Array; }
 

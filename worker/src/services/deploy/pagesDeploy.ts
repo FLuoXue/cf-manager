@@ -1,6 +1,6 @@
 import type { Account } from '../../db/models';
 import { getDeployHeaders } from './headers';
-import { computeStaticAssetHash, getContentType, extractZipFiles, uint8ToBase64 } from '../staticAssets';
+import { computeStaticAssetHash, getContentType, uint8ToBase64 } from '../staticAssets';
 
 const CF_BASE = 'https://api.cloudflare.com/client/v4';
 const MAX_RETRIES = 3;
