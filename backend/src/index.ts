@@ -153,6 +153,8 @@ async function start() {
 
 process.on('uncaughtException', (err) => {
   appLogger.error(`[UNCAUGHT] ${err}`);
+  // 进程处于未知状态，交由编排器（Docker/K8s）重启，避免静默损坏
+  process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
   appLogger.error(`[UNHANDLED_REJECTION] ${err}`);

@@ -143,15 +143,27 @@ runs:
         echo "=== Step 1: Ensure all tables exist (CREATE TABLE IF NOT EXISTS) ==="
         # schema.sql 全部使用 CREATE TABLE IF NOT EXISTS，对已有表安全无副作用
         # 这会自动补齐旧版部署中缺失的表（如 catalog_sources、app_settings 等）
-        wrangler d1 execute "$DB_NAME" --file=worker/src/db/schema.sql --remote
+        wrangler d1 execute "$DB_NAME" --file=worker/src/db/schema.sql --remote 2>&1 || {
+          echo "::error::schema.sql 执行失败"
+          exit 1
+        }
 
         echo "=== Step 2: Column-level migrations (add missing columns, skip if exists) ==="
         # 迁移语句统一维护在 migrations.sql 中，新增列时只需编辑该文件，无需修改本工作流
-        # D1 不支持 IF NOT EXISTS 语法，已存在的列会报错，用 || true 静默跳过
+        # D1 不支持 IF NOT EXISTS 语法，已存在的列会报错。仅静默跳过“已存在/重复列”类幂等错误，
+        # 其余迁移失败（语法错、类型冲突等）必须暴露并中止部署，避免 schema 残缺。
         while IFS= read -r line; do
           line=$(echo "$line" | sed 's/--.*$//' | xargs)
           [ -z "$line" ] && continue
-          wrangler d1 execute "$DB_NAME" --command="$line" --remote 2>/dev/null || true
+          out=$(wrangler d1 execute "$DB_NAME" --command="$line" --remote 2>&1) || {
+            if echo "$out" | grep -qiE 'already exists|duplicate column|duplicate.*name|constraint.*failed'; then
+              echo "    ↳ 跳过（列/表已存在，幂等）: $line"
+            else
+              echo "::error::迁移失败: $line"
+              echo "$out"
+              exit 1
+            fi
+          }
         done < worker/src/db/migrations.sql
 
         echo "=== Migration complete ==="

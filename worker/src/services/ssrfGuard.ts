@@ -137,6 +137,22 @@ export function assertUrlSafe(raw: string, env?: SsrfGuardEnv): void {
   ensureHostAllowed(url.hostname, getAllowlist(env));
 }
 
+// 渲染场景的 SSRF 防护：允许 http/https，拒绝私网/环回/链路本地地址字面量。
+// 注意：CF 浏览器渲染在云端执行 fetch，无法在此拦截其重定向，故仅校验初始 URL。
+// 与 assertUrlSafe 不同，此处允许 http（大量站点仅支持 http），但仍阻断内网地址。
+export function assertRenderUrlSafe(raw: string, env?: SsrfGuardEnv): void {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw makeSsrfError('Invalid URL', 400);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw makeSsrfError('Only HTTP(S) URLs are allowed for rendering', 403);
+  }
+  ensureHostAllowed(url.hostname, getAllowlist(env));
+}
+
 // 安全抓取 Catalog 源（管理场景）。接受 JSON 类型；其余防护同 fetchScriptSafely。
 export async function fetchCatalogSafely(raw: string, env?: SsrfGuardEnv, maxSize = 10 * 1024 * 1024): Promise<string> {
   const allowlist = getAllowlist(env);

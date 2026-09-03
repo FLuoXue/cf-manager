@@ -17,6 +17,7 @@ async function deriveKey(raw: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', keyData, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
+// 统一线格式（与 backend 对齐）：ivHex:encHex，其中 enc = ciphertext + GCM tag（内联），IV 12 字节。
 export async function encrypt(text: string, encryptionKey: string): Promise<string> {
   const key = await deriveKey(encryptionKey);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -27,7 +28,22 @@ export async function encrypt(text: string, encryptionKey: string): Promise<stri
 
 export async function decrypt(encryptedText: string, encryptionKey: string): Promise<string> {
   const key = await deriveKey(encryptionKey);
-  const [ivHex, dataHex] = encryptedText.split(':');
+  const parts = encryptedText.split(':');
+  // 兼容旧 backend 格式（iv:tag:enc，16 字节 IV + 独立 tag）
+  if (parts.length === 3) {
+    const iv = fromHex(parts[0]);
+    const tag = fromHex(parts[1]);
+    const data = fromHex(parts[2]);
+    const combined = new Uint8Array(data.length + tag.length);
+    combined.set(data, 0);
+    combined.set(tag, data.length);
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, key, combined);
+    return new TextDecoder().decode(decrypted);
+  }
+  if (parts.length !== 2) {
+    throw new Error('[Encryption] invalid ciphertext format');
+  }
+  const [ivHex, dataHex] = parts;
   const iv = fromHex(ivHex);
   const data = fromHex(dataHex);
   const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);

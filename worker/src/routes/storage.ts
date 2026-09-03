@@ -256,6 +256,17 @@ app.put('/:accountId/r2/:bucket/upload', async (c) => {
   const file = form.get('file') as File | null;
   if (!key) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'key is required' } }, 400);
   if (!file) return c.json({ error: { code: 'NO_FILE', message: 'file is required' } }, 400);
+
+  // 上传体积上限 50MB（P1-3：Worker 端缺乏请求体大小限制，易被滥用）
+  const MAX_R2_UPLOAD = 50 * 1024 * 1024;
+  const cl = parseInt(c.req.header('content-length') || '0', 10);
+  if (cl > MAX_R2_UPLOAD) {
+    return c.json({ error: { code: 'PAYLOAD_TOO_LARGE', message: '上传体积超过 50MB 上限' } }, 413);
+  }
+  if (file.size > MAX_R2_UPLOAD) {
+    return c.json({ error: { code: 'PAYLOAD_TOO_LARGE', message: '上传体积超过 50MB 上限' } }, 413);
+  }
+
   const buffer = await file.arrayBuffer();
   await cfFetchRaw(account, `${acctPath(account)}/r2/buckets/${c.req.param('bucket')}/objects/${encodeURIComponent(key)}`, c.env.ENCRYPTION_KEY, {
     method: 'PUT',

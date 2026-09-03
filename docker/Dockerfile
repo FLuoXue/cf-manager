@@ -69,4 +69,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health || exit 1
 
+# 以非 root 用户运行，降低容器被攻破后的影响面（需确保 /app/data 可写）
+RUN addgroup -S nodejs && adduser -S node -G nodejs && chown -R node:nodejs /app
+USER node
+
 CMD ["node", "dist/index.js"]
