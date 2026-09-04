@@ -50,7 +50,7 @@ jobs:
         run: npm ci
       - name: Build frontend
         working-directory: frontend
-        run: npm run build
+        run: npx vite build
       - name: Typecheck frontend
         working-directory: frontend
         run: npm run typecheck
@@ -70,9 +70,19 @@ jobs:
       - name: Install worker dependencies
         working-directory: worker
         run: npm ci
-      - name: Build worker (includes frontend + shared sync)
+      # 生成被 .gitignore 的构建期文件（version.ts / shared 数据 / catalog 校验器），
+      # 供 typecheck 与 esbuild 使用。不再调用 build.js —— 它会在 CI 里重复安装并构建
+      # 整个 frontend（frontend 已由 build-frontend job 独立校验），重复导致 14 分钟级延迟。
+      - name: Prepare generated files (version + shared sync)
         working-directory: worker
-        run: npm run build
+        run: |
+          node ../scripts/gen-version.js worker
+          node ../scripts/sync-shared.js
+      - name: Build worker (esbuild bundle only)
+        working-directory: worker
+        run: |
+          mkdir -p public
+          npm run build:worker
       - name: Typecheck worker
         working-directory: worker
         run: npm run typecheck
