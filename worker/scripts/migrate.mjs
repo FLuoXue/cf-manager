@@ -62,7 +62,9 @@ function appliedVersions() {
 
 function runStatement(stmt) {
   try {
-    runWrangler(['d1', 'execute', DB_NAME, '--command', stmt, ...REMOTE_FLAG]);
+    // capture=true：失败时需拿到子进程 stderr 才能识别「列/表已存在」等幂等错误，
+    // 否则 stdio='ignore' 时 e.stderr 为 undefined，正则永远匹配不上，误判为致命错误。
+    runWrangler(['d1', 'execute', DB_NAME, '--command', stmt, ...REMOTE_FLAG], true);
     return { ok: true };
   } catch (e) {
     const msg = String((e && (e.stderr || e.stdout)) || e.message || '');
