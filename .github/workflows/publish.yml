@@ -94,7 +94,7 @@ jobs:
       - name: Install worker dependencies
         if: steps.cache-worker.outputs.cache-hit != 'true'
         working-directory: worker
-        run: npm install
+        run: npm ci
 
       - name: Build and package
         working-directory: worker
