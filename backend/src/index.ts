@@ -112,7 +112,18 @@ app.use('/api/v1', v1RequestLogger);
 app.use('/api/v1', openaiRouter);
 app.use('/api/v1', v1ErrorHandler); // OpenAI-format error handler (before global errorHandler)
 
-app.get('/api/quota', async (_req: Request, res: Response, next: NextFunction) => {
+app.get('/api/quota', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const wantsSync = req.query.sync === 'true' || req.query.refresh === 'true';
+    if (wantsSync) {
+      await syncUsageFromCloudflare();
+      invalidateAiCache();
+    }
+    res.json(getQuotaSummary());
+  } catch (err) { next(err); }
+});
+
+app.post('/api/quota/sync', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     await syncUsageFromCloudflare();
     invalidateAiCache();
@@ -152,7 +163,7 @@ async function start() {
     }
   });
   app.listen(config.port, () => {
-    appLogger.info(`Server running on port ${config.port}`);
+    appLogger.info(`Server running on port ${config.port} (ready)`);
   });
 }
 

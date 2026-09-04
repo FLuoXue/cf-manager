@@ -17,6 +17,14 @@
           clearable
           style="width: 200px"
         />
+        <n-button
+          secondary
+          type="primary"
+          :loading="quotaStore.syncing"
+          @click="quotaStore.fetchQuota(true)"
+        >
+          {{ quotaStore.syncing ? t('dashboard.syncingQuota') : t('dashboard.syncQuota') }}
+        </n-button>
       </n-space>
     </n-space>
 

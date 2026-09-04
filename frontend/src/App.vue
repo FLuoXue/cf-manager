@@ -255,14 +255,16 @@ function onResize() {
   if (isMobile.value && fabPos.x >= 0) clampFab();
 }
 
+function onAuthExpired() {
+  isAuthenticated.value = false;
+  showLogin.value = true;
+}
+
 onMounted(async () => {
   applyTheme();
   initFabPos();
   window.addEventListener('resize', onResize);
-  window.addEventListener('auth-expired', () => {
-    isAuthenticated.value = false;
-    showLogin.value = true;
-  });
+  window.addEventListener('auth-expired', onAuthExpired);
   try {
     const resp: any = await apiClient.get('/settings', { _silent: true });
     applyVersion(resp.data);
@@ -278,6 +280,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize);
+  window.removeEventListener('auth-expired', onAuthExpired);
 });
 
 async function handleLogin() {

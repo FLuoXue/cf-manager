@@ -178,6 +178,7 @@ chmod +x deploy.sh && ./deploy.sh
 |---|---|---|
 | 账户管理 CRUD | `src/routes/accounts.ts` | `src/routes/accounts.ts` |
 | DNS 记录管理 | `src/routes/dns.ts` | `src/routes/dns.ts` |
+| Cloudflare Tunnel 穿透 | `src/routes/tunnels.ts` | `src/routes/tunnels.ts` |
 | Workers/Pages 部署（batch-deploy 统一单/批量 + config 重部署预填） | `src/routes/workers.ts` | `src/routes/workers.ts` |
 | KV/D1/R2 存储 | `src/routes/storage.ts` | `src/routes/storage.ts` |
 | AI 推理（内部） | `src/routes/ai.ts` | `src/routes/ai.ts` |
@@ -208,8 +209,13 @@ chmod +x deploy.sh && ./deploy.sh
 | DNS 服务 | `src/services/dnsService.ts` | `src/routes/dns.ts`（内联） |
 | 存储服务 | `src/services/storageService.ts` | `src/routes/storage.ts`（内联） |
 | Worker 部署服务 | `src/services/workerService.ts` | `src/routes/workers.ts`（内联） |
+| Worker/Pages 配置与重部署 | `src/services/workerConfig.ts` | `src/services/workerConfig.ts` |
+| Pages 管理服务 | `src/services/pagesService.ts` | `src/routes/workers.ts`（内联） |
 | Zone 服务 | `src/services/zoneService.ts` | `src/routes/dns.ts`（内联） |
 | Catalog 部署 | `src/services/catalogDeploy.ts` | `src/services/catalogDeploy.ts` |
+| Tunnel 隧道服务 | `src/services/tunnelService.ts` | `src/services/tunnelService.ts` |
+| 规则集服务 | `src/services/rulesetService.ts` | `src/services/rulesetService.ts` |
+| SSRF 防护 | `src/services/ssrfGuard.ts` | `src/services/ssrfGuard.ts` |
 | Catalog 校验 | `src/services/catalogValidator.ts`（自动生成） | `src/services/catalogValidator.ts`（自动生成） |
 | 日志系统 | `src/services/logger.ts`（winston） | `src/services/logger.ts`（console） |
 | 定时任务调度 | `src/services/taskScheduler.ts` | —（用 `scheduled` handler） |
@@ -248,6 +254,7 @@ chmod +x deploy.sh && ./deploy.sh
 | Axios 客户端/拦截器 | `src/api/client.ts` |
 | 账户 API 封装 | `src/api/accounts.ts` |
 | DNS API 封装 | `src/api/dns.ts` |
+| 隧道 API 封装 | `src/api/tunnels.ts` |
 | Workers API 封装 | `src/api/workers.ts` |
 | 存储 API 封装 | `src/api/storage.ts` |
 | 设置 API 封装 | `src/api/settings.ts` |
@@ -259,9 +266,14 @@ chmod +x deploy.sh && ./deploy.sh
 | DNS 状态管理 | `src/stores/dnsStore.ts` |
 | 仪表盘页 | `src/views/DashboardView.vue` |
 | 账户管理页 | `src/views/AccountsView.vue` |
+| 隧道穿透页 | `src/views/TunnelsView.vue` |
 | DNS 管理页 | `src/views/DnsView.vue` |
 | Workers/Pages 页 | `src/views/WorkersView.vue` |
 | 存储管理页 | `src/views/StorageView.vue` |
+| AI 对话页 | `src/views/AiChatView.vue` |
+| AI 图像页 | `src/views/AiImageView.vue` |
+| AI 语音页 | `src/views/AiAudioView.vue` |
+| AI 翻译页 | `src/views/AiTranslateView.vue` |
 | AI 推理页 | `src/views/AiView.vue` |
 | 浏览器渲染页 | `src/views/BrowserRenderView.vue` |
 | 应用商店页 | `src/views/StoreView.vue` |

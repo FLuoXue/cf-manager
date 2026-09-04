@@ -27,6 +27,7 @@ export interface AuditLogWithName extends AuditLog {
 }
 
 export function getRecentLogs(limit: number = 20): AuditLogWithName[] {
+  const safeLimit = Math.min(Math.max(1, limit), 200);
   return getDb()
     .prepare(
       `SELECT a.*, acc.name AS account_name
@@ -34,7 +35,7 @@ export function getRecentLogs(limit: number = 20): AuditLogWithName[] {
        LEFT JOIN accounts acc ON a.account_id = acc.id
        ORDER BY a.created_at DESC LIMIT ?`
     )
-    .all(limit) as AuditLogWithName[];
+    .all(safeLimit) as AuditLogWithName[];
 }
 
 export interface LogFilter {
@@ -62,7 +63,7 @@ export function queryLogs(filter: LogFilter = {}): AuditLogWithName[] {
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limit = filter.limit ?? 100;
+  const limit = Math.min(Math.max(1, filter.limit ?? 100), 500);
 
   return getDb()
     .prepare(

@@ -1,6 +1,11 @@
 <template>
   <div class="ai-stats-root">
     <!-- 汇总信息 -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <div style="font-size: 16px; font-weight: 600;">{{ t('aiStats.title', 'AI 使用量统计') }}</div>
+      <n-button secondary type="primary" size="small" :loading="loading" @click="fetchUsage">{{ t('common.refresh') }}</n-button>
+    </div>
+    <n-spin :show="loading">
     <div class="ai-stats-summary">
       <div class="stats-summary-card">
         <span class="stats-summary-label">{{ t('aiStats.totalAccounts') }}</span>
@@ -68,12 +73,14 @@
         </n-gi>
       </n-grid>
     </div>
+    </n-spin>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import apiClient from '../api/client';
 
 interface AiUsageItem {
   accountId: string;
@@ -83,6 +90,7 @@ interface AiUsageItem {
 }
 
 const { t } = useI18n();
+const loading = ref(false);
 const usageData = ref<AiUsageItem[]>([]);
 
 const totalNeurons = computed(() => usageData.value.reduce((sum, u) => sum + (u.totalNeurons || 0), 0));
@@ -94,16 +102,10 @@ const activeModelCount = computed(() => {
 });
 
 async function fetchUsage() {
+  loading.value = true;
   try {
-    const token = localStorage.getItem('api_token');
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const response = await fetch('/api/ai/usage', { headers });
-    if (!response.ok) throw new Error(`Failed to fetch usage: ${response.status}`);
-
-    const result = await response.json();
-    const data = result.data || result;
+    const { data: result } = await apiClient.get('/ai/usage');
+    const data = (result as any)?.data || result;
     usageData.value = (data || []).map((d: any) => ({
       ...d,
       totalNeurons: d.totalNeurons || 0,
@@ -111,6 +113,8 @@ async function fetchUsage() {
   } catch (error) {
     console.error('[AiStatsView] Failed to fetch usage:', error);
     usageData.value = [];
+  } finally {
+    loading.value = false;
   }
 }
 

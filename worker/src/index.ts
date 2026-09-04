@@ -82,6 +82,7 @@ app.get('/api/health', async (c) => {
       ENCRYPTION_KEY: !!c.env.ENCRYPTION_KEY,
       API_SECRET: !!c.env.API_SECRET,
       ASSETS: !!c.env.ASSETS,
+      KV: !!c.env.KV,
     },
   };
   if (c.env.DB) {
@@ -107,6 +108,16 @@ app.route('/api/tunnels', tunnelsRouter);
 app.route('/api/ai', aiRouter);
 
 app.get('/api/quota', async (c) => {
+  const wantsSync = c.req.query('sync') === 'true' || c.req.query('refresh') === 'true';
+  if (wantsSync) {
+    await syncUsageFromCloudflare(c.env.DB, c.env.ENCRYPTION_KEY);
+    await invalidateAiCache(c.env);
+  }
+  const summary = await getQuotaSummary(c.env.DB, c.env.ENCRYPTION_KEY);
+  return c.json(summary);
+});
+
+app.post('/api/quota/sync', async (c) => {
   await syncUsageFromCloudflare(c.env.DB, c.env.ENCRYPTION_KEY);
   await invalidateAiCache(c.env);
   const summary = await getQuotaSummary(c.env.DB, c.env.ENCRYPTION_KEY);

@@ -131,6 +131,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       appLogger.warn(`[Account] Failed to probe features for "${name}": ${e}`);
     }
 
+    clearCache();
     createAuditLog(id, 'create_account', name, `auth_type=${auth_type}`, 'success');
     res.status(201).json({ id, ...input, api_token: '***', api_key: '***' });
   } catch (err) { next(err); }

@@ -2,6 +2,7 @@ import { getActiveAccounts, getActiveAccountsByFeature, hasFeature, getAllQuotaT
 import type { Env } from '../types';
 import { cfGraphQL } from './cfApi';
 import { logger } from './logger';
+import { mapConcurrent } from '../utils/concurrent';
 import pricingData from '../data/model-pricing.json';
 
 export type ResourceType = 'workers_requests' | 'ai_neurons' | 'browser_render_seconds';
@@ -48,8 +49,9 @@ export async function trackUsage(db: D1Database, accountId: number, resource: Re
 
 export async function syncUsageFromCloudflare(db: D1Database, encryptionKey: string): Promise<void> {
   const accounts = await getActiveAccounts(db);
+  const SYNC_CONCURRENCY = 6;
 
-  await Promise.all(accounts.map(async (account) => {
+  await mapConcurrent(accounts, SYNC_CONCURRENCY, async (account) => {
     if (hasFeature(account, 'ai')) {
       try {
         const usage = await getAiUsageToday(account, encryptionKey);
@@ -75,7 +77,7 @@ export async function syncUsageFromCloudflare(db: D1Database, encryptionKey: str
         logger.error('sync', `Workers usage failed for ${account.name}: ${e}`);
       }
     }
-  }));
+  });
 }
 
 export async function getQuotaSummary(db: D1Database, _encryptionKey: string) {

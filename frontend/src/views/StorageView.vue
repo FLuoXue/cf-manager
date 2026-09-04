@@ -270,7 +270,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, onMounted, watch } from 'vue';
+import { ref, computed, h, onMounted, onBeforeUnmount, watch } from 'vue';
 import { NButton, NSpace, NInput, NSelect, NCheckbox, NTag, useMessage, useDialog } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
@@ -856,6 +856,21 @@ const r2PreviewName = ref('');
 const r2PreviewKey = ref('');
 const r2PreviewLoading = ref(false);
 
+function clearR2PreviewUrl() {
+  if (r2PreviewUrl.value) {
+    URL.revokeObjectURL(r2PreviewUrl.value);
+    r2PreviewUrl.value = '';
+  }
+}
+
+watch(showR2Preview, (isOpen) => {
+  if (!isOpen) clearR2PreviewUrl();
+});
+
+onBeforeUnmount(() => {
+  clearR2PreviewUrl();
+});
+
 function isImageType(contentType: string): boolean {
   return contentType.startsWith('image/');
 }
@@ -864,7 +879,7 @@ async function handlePreviewR2(row: any) {
   if (!selectedAccount.value || !selectedR2Bucket.value) return;
   r2PreviewName.value = row.name;
   r2PreviewKey.value = row.key;
-  r2PreviewUrl.value = '';
+  clearR2PreviewUrl();
   r2PreviewLoading.value = true;
   showR2Preview.value = true;
   try {

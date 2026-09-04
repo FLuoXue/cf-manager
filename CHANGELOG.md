@@ -1,12 +1,14 @@
 # Changelog
 
-## [2.1.0] - 2026-09-03
+## [2.1.0] - 2026-09-04
 
 ### ✨ 新功能
 
 - **新增 OpenAI 兼容文本嵌入端点 `POST /v1/embeddings`（双端对称）**：backend（Express）与 worker（Hono）的 `openai` 路由新增 `/embeddings`，调用 Cloudflare Workers AI Text Embeddings 模型（`bge-base/small/large-en-v1.5`、`bge-m3`、`qwen3-embedding-0.6b`、`plamo-embedding-1b`、`embeddinggemma-300m` 等）。请求体兼容 OpenAI 格式（`{ model, input, encoding_format }`，`input` 支持 string 或 string[]），经 `/ai/run/{model}` 转发 `{ text: [...] }` 并将响应转换为 OpenAI 的 `object:list + data[].embedding + usage`；支持 `encoding_format: "base64"`（Float32 little-endian）、`X-Account-ID` 指定账户与账户轮换/配额记账/审计日志。新增 `estimateEmbeddingsNeurons` 神经元估算（按 token 计费，沿用 `model-pricing.json` 已有 embedding 模型费率）。
 - **新增 OpenAI 兼容语音转文本端点 `POST /audio/transcriptions`（双端对称）**：让 `whisper` / `whisper-large-v3-turbo` / `whisper-tiny-en` / `deepgram/nova-3` / `deepgram/flux` 等语音识别模型支持 OpenAI 兼容格式调用。请求体统一为 JSON `{ model, audio: <base64>, language?, prompt?, response_format? }`，出参支持 JSON 或 `response_format: "text"` 纯文本；复用账户轮换（`selectBestAccount`）、`X-Account-ID` 指定路由、配额记账（`estimateAsrNeurons` 音频时长折算）、审计日志与 429 故障自动轮换；针对静音/无文本输入做稳健兼容，不再误报 502。
-- **新增 `flux-2-klein` / `flux-2-dev` / `flux-2-klein-4b` 图生图编辑支持（双端对称）**：`/images/generations` 对 Flux 2 族模型适配官方 `input_image_0` multipart 协议，透传 `guidance`/`seed`；前端 `AiImageView` 图生图模式按能力启用；增加客户端 canvas 自动缩放与 JPEG 压缩兜底（≤1024px，≤900KB），防止超出 Cloudflare multipart 1MB 上限。
+- **新增 `flux-2-klein` / `flux-2-dev` / `flux-2-klein-4b` 图生图编辑支持（双端对称）**：`/images/generations` 对 Flux 2 族模型适配官方 multipart 协议，透传 `guidance`/`seed`；前端 `AiImageView` 图生图模式按能力启用；客户端 canvas 自动缩放与 JPEG 压缩兜底（≤1024px，≤900KB），防止超出 Cloudflare multipart 1MB 上限。协议要点（经 A/B 矩阵直连 CF 逐项实测确定）：参考图字段必须为 `input_image_0` 且以二进制文件附件提交；请求头不得携带 `Accept: application/json`（否则 CF 返回 500 / code 3043）；backend 用 `Buffer.concat` 组装二进制块、worker 用原生 `FormData` + `Blob`；multipart part 的 `Content-Type` 与扩展名按参考图真实格式声明（内置 magic bytes 检测 JPEG/PNG/WebP/GIF），PNG 谎报 `image/jpeg` 同样触发 3043。
+  - **非 Flux 2 模型图生图显式拒绝**：经 10 个图像模型 × 多种字段格式全量实测，CF REST 通道下仅 Flux 2 族真正支持图生图——`flux-1-schnell` / `leonardo/lucid-origin` / `leonardo/phoenix-1.0` 的 schema 无 `image` 字段；`stable-diffusion-xl-base-1.0` / `bytedance/stable-diffusion-xl-lightning` 的 runtime 返回 `input tensor 'image' is not present`；`dreamshaper-8-lcm` 返回 `unexpected shape for input 'image'`；`runwayml/stable-diffusion-v1-5-inpainting` 字段层通过但 CF triton 上游推理失败。故对非 Flux 2 模型收到参考图时直接返回 400 `img2img_unsupported`，避免发到 CF 后拿到模糊上游错误；前端 `AiImageView` 图生图模式本就以白名单仅对 Flux 2 启用，此为后端兜底。
+  - **上游错误透传**：多账户轮换时收集每个账户的失败详情到 `details` 数组一并透传，仅当全部账户均为 4006 配额耗尽时才返回 `ALL_ACCOUNTS_EXHAUSTED`，否则透传具体上游状态码与原因，便于定位真实故障。
 
 ### 🔒 安全与凭证兼容
 
@@ -32,7 +34,6 @@
 - **修正文生图模型 img2img 入参字段错误（双端对称）**：核对 Cloudflare 官方 input schema 后修正 `openai.ts` 的 `/images/generations` 路由（backend + worker）：(1) `lykon/dreamshaper-8-lcm` 原落入通用透传分支、把图生图输入以裸 base64 发到 `image`（整数数组字段），类型错误；现归入 SD 族分支改用 `image_b64`（官方 schema 字段名）；(2) SD 族 img2img 原发送 `mask_image`（白遮罩 PNG 字符串），但官方字段为 `mask`（8-bit 整数数组）且纯 img2img 无需遮罩，已删除该错误字段与不再使用的 `WHITE_MASK_PNG` 常量。文生图/图生图请求参数现已与官方 schema 对齐。
 - **修正付费模型（require_workers_paid）误判为免费（双端对称）**：`/api/v1/models` 返回的模型元数据中，`require_workers_paid` 标记值在 Cloudflare `/ai/models/search` 实际为**字符串 `"true"`**（而非此前代码假设的布尔 `true`），导致 `modelRequiresWorkersPaid` 恒返回 false、前端所有付费模型（如 `@cf/zai-org/glm-5.3-flash`、`@cf/zai-org/glm-5.3`、`@cf/moonshotai/kimi-k2.6`/`kimi-k2.7-code`）都不显示「付费」徽标。现已兼容 `"true"`/`1`/`"1"`/`true` 取值。清掉排障用的临时日志 dump。
 - **前端付费徽标渲染稳健化（AiChatView / AiImageView / AiAudioView）**：`n-select` 的 `render-label` 槽不再依赖 Naive UI 透传 option 的自定义字段（`option.requirePaid`），改为从 `modelOptions` 派生 `paidModelValues` 集合、以 `option.value` 查表渲染「付费」徽标，避免个别版本/缓存下自定义字段透传失败导致徽标不显示。
-
 ### 🎤 新增 ASR 语音转文本路由（双端对称）
 
 - **新增 OpenAI 兼容 `POST /audio/transcriptions` 路由（backend + worker）**：让 `whisper` / `whisper-large-v3-turbo` / `whisper-tiny-en` / `deepgram/nova-3` / `deepgram/flux` 等语音识别模型真正可用（此前仅有 TTS 路由、ASR 无调用入口）。请求体统一为 JSON `{ model, audio: <base64>, language?, prompt?, response_format? }`（OpenAI 原版用 multipart `file`，此处与项目其余路由保持一致走 JSON base64）；转发 `POST /ai/run/{model}`（CF 请求体 `{ audio, language?, prompt? }`），出参 `{ text, neurons, task, language }`，`response_format: "text"` 时返回纯文本。复用账户选择（`selectBestAccount` + `X-Account-ID` 指定）、配额记账（`estimateAsrNeurons` 按音频字节数近似时长 × `perAudioMinute` 计费）、审计日志（`ai_asr_transcription`）、神经元耗尽轮换与 429 兜底，与 TTS/翻译路由完全对称。
@@ -47,6 +48,16 @@
   - **Worker（D1）**：历史演进拆为 `worker/src/db/migrations/NNNN_*.sql`（一条逻辑迁移一个文件），由新增 `worker/scripts/migrate.mjs` 在部署时按版本号有序应用并记录到 D1 的 `_migrations` 表；对现网已含全部列的库，命中「列/表已存在」按幂等跳过并照常记录（兼容旧库），其余错误暴露并中止部署。`schema.sql` 保持为「当前完整 schema」的单一真相源，全新库已由它含全部列，迁移仅补齐旧库——消除 P1-19 的冗余废语句。worker `package.json` 新增 `db:migrate` 脚本。
   - **Backend（SQLite）**：`db.ts` 内嵌 `MIGRATIONS` 数组（历史演进用 `ADD COLUMN IF NOT EXISTS` 幂等），`initDb` 改为先建表再 `applyMigrations(db)`，迁移写入本地 `_migrations` 表；旧的 PRAGMA 探测 + ALTER 块删除。
   - **CI 门禁（P1-17 核心）**：新增 `scripts/check-db-schema.mjs` 并在 `ci.yml` 加 `schema-check` job，解析 backend `db.ts` 与 worker `schema.sql` 的**共享表**列集合做比对（两端不一致则 PR 检查变红），并校验 worker 迁移不引入 `schema.sql` 之外的列，从机制上杜绝双端 schema 漂移。
+
+### 🧩 代码结构与性能治理（P2）
+
+- **`workerService.ts` 巨型文件拆分（职责收敛）**：将 backend `workerService.ts` 中约 400 行与 Worker 脚本本身无关的逻辑拆为两个专职服务——`pagesService.ts`（Pages 项目管理：列表/详情/域名/部署记录/绑定/删除等，+221 行）与 `workerConfig.ts`（Worker/Pages 配置读取与差异应用：`getWorkerConfig` / `getPagesConfig` / `applyWorkerConfigDiff`，供重部署预填使用，+178 行）。原文件瘦身约 400 行，路由层按职责分别 import，消除单体服务文件的维护负担。拆分时同步在 `routes/workers.ts` 补齐 `mapConcurrent`（并发映射 helper，本次一并抽取到 `utils/concurrent.ts`）的导入。
+- **抽取并发控制 helper `utils/concurrent.ts`（双端对称，新增文件）**：把账户级并发映射 `mapConcurrent(items, concurrency, fn)` 从服务层抽到 `backend/src/utils/concurrent.ts` 与 `worker/src/utils/concurrent.ts`（各 29 行），供 `quotaTracker` / `workers.ts` / `ai.ts` 等复用，避免各服务重复实现并发逻辑。
+- **配额同步并发限流与防重入（双端对称）**：`syncUsageFromCloudflare()` 原使用无节流的 `Promise.all` 遍历全部账户，账户数多时会瞬时打出大量并发 CF 请求；改为 `mapConcurrent(accounts, 6, ...)` 限制并发度，并新增 `inFlightSyncPromise` 请求去重——同一时刻的多个同步请求合并为同一个 in-flight Promise，避免重复打 CF。
+- **AI 账户缓存快照与淘汰修正（backend `accountRouter`）**：`getAiAccountSnapshot()` 原只要缓存 key 存在就返回，当缓存值为空数组时会形成「永远命中空快照」的死状态；改为 `cached && cached.length > 0` 才算有效。`removeAccountFromAiCache()` 在列表清空后立即 `del` 缓存 key，避免残留空数组导致快照永不刷新。新建/更新账户时同步清理 AI 缓存（`accounts.ts` 调 `clearCache()`）。
+- **前端配额同步交互与内存/查询保护治理**：仪表盘新增「同步额度」入口（`DashboardView` + `quotaStore.fetchQuota(refresh)` 走 `?sync=true` 触发服务端同步），`loading` 与 `syncing` 状态分离，避免手动同步时整页 loading 闪烁；`AiStatsView` 配合调整配额统计展示。同时对 `App.vue` / `AccountsView` / `AiChatView` / `StorageView` / `TunnelsView` 做内存泄漏与查询保护治理——清理未释放的事件监听、定时器与未 abort 的请求，对渲染的用户输入 HTML 统一走 DOMPurify 净化，消除组件卸载后状态更新与 XSS 注入面。
+- **国际化补充**：`en.json` / `zh-CN.json` 各新增 `dashboard.syncQuota` / `dashboard.syncingQuota`（同步额度 / 同步中...）两条文案。
+- **工程规范与仓库卫生**：`.gitignore` 补充构建与归档产物（`dist/`、`*.zip`、`*.tar.gz`、`*.tgz`）与测试覆盖率输出（`coverage/`、`.vitest/`），并移除对 `.claude/` 的忽略；`AGENTS.md` 同步更新功能场景索引表。
 
 ## [2.0.4] - 2026-08-19
 

@@ -92,6 +92,8 @@
   "dashboard": {
     "title": "仪表盘",
     "todayQuota": "今日额度",
+    "syncQuota": "同步额度",
+    "syncingQuota": "同步中...",
     "searchAccounts": "搜索账户...",
     "accounts": "账户",
     "sortNameAsc": "名称 A-Z",

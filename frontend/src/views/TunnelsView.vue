@@ -52,7 +52,7 @@
           </n-space>
 
           <n-alert v-if="isAccountLevelPhase" type="info" :bordered="false" style="margin-top: 4px">
-            <span v-html="t('tunnels.accountLevelHint')"></span>
+            <span v-html="DOMPurify.sanitize(t('tunnels.accountLevelHint'))"></span>
           </n-alert>
           <n-data-table
             :columns="ruleColumns"
@@ -352,6 +352,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, h, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import DOMPurify from 'dompurify';
 import { NButton, NSpace, NTag, NPopconfirm } from 'naive-ui';
 import { tunnelsApi } from '../api/tunnels';
 import { dnsApi } from '../api/dns';

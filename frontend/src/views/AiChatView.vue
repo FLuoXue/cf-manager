@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted, nextTick, computed } from 'vue';
+import { ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, computed } from 'vue';
 import { useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import { accountsApi } from '../api/accounts';
@@ -334,6 +334,10 @@ function scrollToBottom() {
     }
   });
 }
+
+onBeforeUnmount(() => {
+  stopInference();
+});
 
 onMounted(() => {
   fetchAccounts();

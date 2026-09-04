@@ -3,6 +3,7 @@ import { getActiveAccounts, hasFeature, AccountFeature } from '../models/account
 import { getAiUsageToday } from './aiService';
 import { getWorkersUsageToday } from './workerService';
 import { appLogger } from './logger';
+import { mapConcurrent } from '../utils/concurrent';
 
 export type ResourceType = 'workers_requests' | 'ai_neurons' | 'browser_render_seconds';
 
@@ -22,10 +23,25 @@ const RESOURCE_FEATURE: Record<ResourceType, AccountFeature> = {
   browser_render_seconds: 'browser_render',
 };
 
-export async function syncUsageFromCloudflare(): Promise<void> {
-  const accounts = getActiveAccounts();
+/** 并发同步最大并发数 */
+const SYNC_CONCURRENCY = 6;
 
-  await Promise.all(accounts.map(async (account) => {
+/** 正在执行中的同步 Promise，用于防重入与并发请求去重 */
+let inFlightSyncPromise: Promise<void> | null = null;
+
+export async function syncUsageFromCloudflare(): Promise<void> {
+  if (inFlightSyncPromise) {
+    return inFlightSyncPromise;
+  }
+  inFlightSyncPromise = executeSyncFromCloudflare().finally(() => {
+    inFlightSyncPromise = null;
+  });
+  return inFlightSyncPromise;
+}
+
+async function executeSyncFromCloudflare(): Promise<void> {
+  const accounts = getActiveAccounts();
+  await mapConcurrent(accounts, SYNC_CONCURRENCY, async (account) => {
     if (hasFeature(account, 'ai')) {
       try {
         const aiUsage = await getAiUsageToday(account);
@@ -57,7 +73,7 @@ export async function syncUsageFromCloudflare(): Promise<void> {
         appLogger.error(`[Sync] Workers usage failed for ${account.name}: ${e}`);
       }
     }
-  }));
+  });
 }
 
 export function getQuotaSummary() {
