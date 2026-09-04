@@ -22,8 +22,6 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: backend/package-lock.json
-      # 直接缓存 node_modules：better-sqlite3 是原生模块，~/.npm 缓存命中后 npm ci 仍要
-      # 重新解压并下载/编译原生二进制，波动大。命中 node_modules 后直接跳过 npm ci。
       - name: Cache backend node_modules
         id: cache-backend
         uses: actions/cache@v5
