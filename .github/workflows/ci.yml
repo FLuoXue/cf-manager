@@ -4,6 +4,8 @@ name: CI
 # 任一失败则该 PR 的状态检查变红，配合分支规则集（protect-master）阻止合并。
 # 三个 job 的 status check context 分别为：build-backend / build-frontend / build-worker
 on:
+  push:
+    branches: [master]
   pull_request:
     branches: [master]
 
