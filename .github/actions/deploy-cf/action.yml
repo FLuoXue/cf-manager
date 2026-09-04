@@ -292,7 +292,7 @@ runs:
       if: steps.cache-worker.outputs.cache-hit != 'true'
       working-directory: worker
       shell: bash
-      run: npm install
+      run: npm ci
 
     - name: Build
       working-directory: worker
