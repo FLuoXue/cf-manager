@@ -77,6 +77,20 @@ jobs:
             echo "ref=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Cache worker node_modules
+        id: cache-worker
+        uses: actions/cache@v5
+        with:
+          path: worker/node_modules
+          key: worker-node-${{ hashFiles('worker/package-lock.json') }}
+
+      - name: Cache frontend node_modules
+        id: cache-frontend
+        uses: actions/cache@v5
+        with:
+          path: frontend/node_modules
+          key: frontend-node-${{ hashFiles('frontend/package-lock.json') }}
+
       - name: Install worker dependencies
         working-directory: worker
         run: npm install
