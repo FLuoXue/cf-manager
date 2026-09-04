@@ -4,9 +4,9 @@
  * 从 catalogDeploy.ts 迁移而来，改用 deploy/ 子模块。
  */
 import type { Account } from '../../db/models';
-import { cfFetch, cfFetchAll } from '../cfApi';
+import { cfFetch } from '../cfApi';
 import type { CatalogTemplate, CatalogBinding } from '../catalogValidator';
-import { extractZipFiles, validatePagesProjectName, ensurePagesProject } from '../pagesDeploy';
+import { extractZipFiles, validatePagesProjectName } from '../pagesDeploy';
 import { resolveMainModule } from '../assetsDeploy';
 import { addAuditLog } from '../../db/models';
 
@@ -135,7 +135,7 @@ async function resolveBinding(
     if (sel.mode === 'existing' && sel.existingId) {
       return { type: 'r2', name: binding.name, cfBinding: { type: 'r2_bucket', name: binding.name, bucket_name: sel.existingId }, created: false, resourceType: 'r2', resourceId: sel.existingId };
     }
-    let buckets: any[] = [];
+    let buckets: any[];
     try {
       const list = await cfFetch<{ result: any }>(account, `/accounts/${account.account_id}/r2/buckets`, encryptionKey);
       buckets = (list.result?.buckets) || [];
@@ -206,7 +206,6 @@ function buildPagesDeploymentConfigs(template: CatalogTemplate, resolvedBindings
       prodConfigs.env_vars[k] = { value: v }; previewConfigs.env_vars[k] = { value: v };
     }
   }
-  const hasResourceBindings = resolvedBindings.some(rb => ['kv', 'd1', 'r2'].includes(rb.type));
   // CF Pages PATCH 部署配置字段格式（来自 wrangler 源码确认）：
   //   kv_namespaces: Record<string, { namespace_id: string }>
   //   d1_databases:   Record<string, { id: string }>

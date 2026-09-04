@@ -11,4 +11,6 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(__dirname, '..', 'data', 'cf-manager.db'),
   proxyUrl: process.env.PROXY_URL || '',
   demoAccountIds: process.env.DEMO_ACCOUNT_IDS || '',
+  logDir: process.env.LOG_DIR || path.join(__dirname, '..', '..', 'data', 'logs'),
+  workerDeployUrlAllowlist: process.env.WORKER_DEPLOY_URL_ALLOWLIST || '',
 };

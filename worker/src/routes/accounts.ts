@@ -518,6 +518,12 @@ app.post('/import-csv', async (c) => {
     return c.json({ error: { code: 'VALIDATION_ERROR', message: '未提供 CSV 文件' } }, 400);
   }
 
+  // 上传体积上限 10MB（P1-3：Worker 端缺乏请求体大小限制，易被滥用）
+  const MAX_CSV_SIZE = 10 * 1024 * 1024;
+  if (file.size > MAX_CSV_SIZE) {
+    return c.json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'CSV 文件超过 10MB 上限' } }, 413);
+  }
+
   const raw = await file.text();
   const cleaned = raw.replace(/^\uFEFF/, ''); // 去除 BOM
   const rows = parseCsv(cleaned);

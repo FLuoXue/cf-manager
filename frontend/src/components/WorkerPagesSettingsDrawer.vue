@@ -182,7 +182,7 @@
       <div v-if="checkedProductionCount > 0" style="color: #d97706; font-weight: 500; padding: 8px 12px; background: #fef3c7; border-radius: 4px; border: 1px solid #fcd34d;">
         {{ t('pagesSettings.batchDeleteWarning', { count: checkedProductionCount }) }}
       </div>
-      <div v-html="t('pagesSettings.batchDeleteConfirm', { count: checkedDeploymentIds.length })"></div>
+      <div>{{ t('pagesSettings.batchDeleteConfirm', { count: checkedDeploymentIds.length }) }}</div>
     </n-space>
   </n-modal>
 </template>

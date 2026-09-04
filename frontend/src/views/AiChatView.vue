@@ -70,6 +70,7 @@
           :loading="modelsLoading"
           size="small"
           filterable
+          :render-label="renderModelLabel"
           @update:value="onModelChange"
         />
         <n-button v-if="messages.length > 0" size="small" quaternary @click="messages = []">
@@ -97,10 +98,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted, nextTick, computed } from 'vue';
+import { ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, computed } from 'vue';
 import { useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import { accountsApi } from '../api/accounts';
+import { renderPaidModelLabel } from '../utils/paidLabel';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -116,7 +118,7 @@ const message = useMessage();
 const selectedAccount = ref<string>('auto'); // 'auto' = 自动分配
 const accountOptions = ref<{ label: string; value: string }[]>([]);
 const selectedModel = ref('');
-const modelOptions = ref<{ label: string; value: string }[]>([]);
+const modelOptions = ref<{ label: string; value: string; requirePaid?: boolean }[]>([]);
 const modelsLoading = ref(false);
 const prompt = ref('');
 const messages = ref<ChatMessage[]>([]);
@@ -137,6 +139,16 @@ const suggestions = computed(() => [
   t('ai.suggestions.s5'),
   t('ai.suggestions.s6'),
 ]);
+
+// 付费模型 value 集合
+const paidModelValues = computed(() => new Set(
+  modelOptions.value.filter((o) => o.requirePaid).map((o) => o.value)
+));
+
+// naive-ui n-select 的 render-label 是函数 prop（不是 slot），须返回 VNode/字符串
+function renderModelLabel(option: any) {
+  return renderPaidModelLabel(option, !!option.value && paidModelValues.value.has(option.value));
+}
 
 async function fetchAccounts() {
   try {
@@ -169,7 +181,7 @@ async function fetchModels() {
     modelOptions.value = (data.data || []).map((m: any) => {
       const fullName = m.id || m.name;
       const shortName = fullName.replace(/^@cf\//, '');
-      return { label: shortName, value: fullName };
+      return { label: shortName, value: fullName, requirePaid: !!m.require_workers_paid };
     });
     
     if (modelOptions.value.length && !modelOptions.value.find(o => o.value === selectedModel.value)) {
@@ -282,7 +294,7 @@ async function sendMessage() {
             if (parsed.error) {
               message.error(parsed.error.message || JSON.stringify(parsed.error));
             }
-          } catch (e) {
+          } catch (_e) {
             console.warn('Failed to parse SSE:', data);
           }
         }
@@ -322,6 +334,10 @@ function scrollToBottom() {
     }
   });
 }
+
+onBeforeUnmount(() => {
+  stopInference();
+});
 
 onMounted(() => {
   fetchAccounts();

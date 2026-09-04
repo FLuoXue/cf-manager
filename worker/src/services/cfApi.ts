@@ -64,11 +64,19 @@ export async function cfGraphQL(
   encryptionKey: string
 ): Promise<any> {
   const headers = await getAuthHeaders(account, encryptionKey);
-  const resp = await fetch(`${CF_BASE}/graphql`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify({ query, variables }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  let resp: Response;
+  try {
+    resp = await fetch(`${CF_BASE}/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ query, variables }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!resp.ok) {
     const body = await resp.text();
     throw new CfApiError(resp.status, body);

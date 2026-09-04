@@ -92,6 +92,8 @@
   "dashboard": {
     "title": "仪表盘",
     "todayQuota": "今日额度",
+    "syncQuota": "同步额度",
+    "syncingQuota": "同步中...",
     "searchAccounts": "搜索账户...",
     "accounts": "账户",
     "sortNameAsc": "名称 A-Z",
@@ -553,6 +555,7 @@
     "steps": "步数",
     "guidance": "引导强度",
     "strength": "变换强度",
+    "seed": "随机种子",
     "negativePrompt": "反向提示词",
     "negativePromptPlaceholder": "不希望出现在图片中的内容..."
   },

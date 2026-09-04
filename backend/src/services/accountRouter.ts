@@ -1,5 +1,5 @@
 import NodeCache from 'node-cache';
-import { getActiveAccounts, getActiveAccountsByFeature, Account, AccountFeature, hasFeature } from '../models/account';
+import { getActiveAccounts, getActiveAccountsByFeature, Account, AccountFeature } from '../models/account';
 import { getCfClient } from './cfFactory';
 import { getAccountQuota, ResourceType } from './quotaTracker';
 import { getQuotaTodayByResource } from '../models/quotaUsage';
@@ -85,7 +85,7 @@ const RESOURCE_FEATURE_MAP: Record<ResourceType, AccountFeature> = {
 
 function getAiAccountSnapshot(): AiSnapshotEntry[] {
   const cached = quotaCache.get<AiSnapshotEntry[]>(AI_CACHE_KEY);
-  if (cached) {
+  if (cached && cached.length > 0) {
     appLogger.debug(`[AccountRouter] Using cached AI snapshot: ${cached.length} accounts, first=${cached[0]?.account.name}, used=${cached[0]?.used}`);
     return cached;
   }
@@ -210,6 +210,9 @@ export function removeAccountFromAiCache(accountId: number): void {
     const idx = list.findIndex(r => r.account.id === accountId);
     if (idx >= 0) {
       const removed = list.splice(idx, 1)[0];
+      if (list.length === 0) {
+        quotaCache.del(AI_CACHE_KEY);
+      }
       appLogger.info(`[AccountRouter] Removed account ${accountId} (${removed.account.name}) from AI cache, ${list.length} remaining`);
     } else {
       appLogger.debug(`[AccountRouter] removeAccountFromAiCache: account ${accountId} not in cache`);

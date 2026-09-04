@@ -3,9 +3,9 @@ import { stream } from 'hono/streaming';
 import type { Env } from '../types';
 import { setExhausted, incrementQuota, addAuditLog, getActiveAccountsByFeature } from '../db/models';
 import { getAuthHeaders, cfFetchRaw } from '../services/cfApi';
-import { getModelInputSchema, extractTtsAdvancedParams, buildTtsCfBody } from '../services/aiService';
+import { getModelInputSchema, extractTtsAdvancedParams, buildTtsCfBody, modelRequiresWorkersPaid } from '../services/aiService';
 import { selectBestAccount, invalidateAiCache, clearOptimistic } from '../services/quotaTracker';
-import { estimateNeurons, estimateImageNeurons, estimateTtsNeurons, estimateTranslationNeurons } from '../services/pricing';
+import { estimateNeurons, estimateImageNeurons, estimateTtsNeurons, estimateTranslationNeurons, estimateEmbeddingsNeurons, estimateAsrNeurons } from '../services/pricing';
 import { getRequestId } from '../middleware/requestId';
 import { logger } from '../services/logger';
 
@@ -189,7 +189,7 @@ async function fetchCf(account: any, body: any, env: Env, timeoutMs: number): Pr
     return resp;
   } catch (fetchErr: any) {
     clearTimeout(timeoutId);
-    if (fetchErr.name === 'AbortError') throw new Error(`Request timeout after ${timeoutMs}ms`);
+    if (fetchErr.name === 'AbortError') throw new Error(`Request timeout after ${timeoutMs}ms`, { cause: fetchErr });
     throw fetchErr;
   }
 }
@@ -215,12 +215,12 @@ app.get('/models', async (c) => {
   }
 
   // TTS 模型：一次性获取模型 schema，下发 speaker 枚举与高级可选参数
-  let ttsModelMeta: Record<string, { speakers?: string[]; default_speaker?: string; advanced_params?: Record<string, any> }> = {};
+  const ttsModelMeta: Record<string, { speakers?: string[]; default_speaker?: string; advanced_params?: Record<string, any> }> = {};
   if (taskFilter && taskFilter.toLowerCase().replace(/-/g, ' ').includes('text to speech')) {
     await Promise.all(models.map(async (m: any) => {
       const modelId = m.name || m.id;
       if (!modelId) return;
-      const schema = await getModelInputSchema(account, modelId, c.env.ENCRYPTION_KEY);
+      const schema = await getModelInputSchema(account, modelId, c.env.ENCRYPTION_KEY, c.env.KV);
       if (!schema) return;
       const speakerProp = schema.properties?.speaker;
       ttsModelMeta[modelId] = {
@@ -240,6 +240,7 @@ app.get('/models', async (c) => {
       created: Math.floor(Date.now() / 1000),
       owned_by: 'cloudflare',
       task: m.task?.name || m.task || undefined,
+      require_workers_paid: modelRequiresWorkersPaid(m),
       speakers: meta.speakers || undefined,
       default_speaker: meta.default_speaker || undefined,
       advanced_params: meta.advanced_params || undefined,
@@ -326,6 +327,8 @@ app.post('/chat/completions', async (c) => {
         // --- while + selectBestAccount rotation loop ---
         const skipped = new Set<number>();
         const retryCount = new Map<number, number>();
+        let lastStatus = 502;
+        let quotaExhausted = false;
 
         while (true) {
           const account = await selectBestAccount(env, 'ai_neurons', skipped, body.model);
@@ -339,6 +342,7 @@ app.post('/chat/completions', async (c) => {
             const errMsg = `Network error: ${netErr.message || netErr}`;
             logger.warn('openai', `[${rid}] Account ${account.name} ${errMsg}`);
             lastError = errMsg;
+            lastStatus = 502;
             try { await addAuditLog(env.DB, { account_id: account.id, action: 'ai_chat_completion', target: body.model, detail: `[${rid}] ${errMsg}`, status: 'error' }); } catch {}
             const count = (retryCount.get(account.id) || 0) + 1;
             retryCount.set(account.id, count);
@@ -350,9 +354,11 @@ app.post('/chat/completions', async (c) => {
           if (!cfResp.ok) {
             const errorText = await cfResp.text();
             lastError = errorText;
+            lastStatus = cfResp.status;
 
             if (isRetryableError(cfResp.status, errorText)) {
               if (isNeuronLimitError(errorText)) {
+                quotaExhausted = true;
                 logger.warn('openai', `[${rid}] Account ${account.name} neuron limit hit (4006), rotating`);
                 await setExhausted(env.DB, account.id, 'ai_neurons');
                 await invalidateAiCache(env);
@@ -378,10 +384,15 @@ app.post('/chat/completions', async (c) => {
           return;
         }
 
-        // All accounts exhausted
+        // 区分失败原因：真配额耗尽才报 quota_exceeded；否则返回真实上游/网络错误，避免误报
         stopHeartbeat();
-        logger.error('openai', `[${rid}] All accounts exhausted. Last error: ${lastError}`);
-        writeSseError(s, { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' });
+        if (quotaExhausted) {
+          logger.error('openai', `[${rid}] All accounts exhausted. Last error: ${lastError}`);
+          writeSseError(s, { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' });
+        } else {
+          logger.error('openai', `[${rid}] Upstream error after retries: ${lastError}`);
+          writeSseError(s, { message: lastError || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus) });
+        }
       } finally {
         stopHeartbeat();
       }
@@ -422,6 +433,8 @@ app.post('/chat/completions', async (c) => {
   // while 循环路由
   const skipped = new Set<number>();
   const retryCount = new Map<number, number>();
+  let lastStatus = 502;
+  let quotaExhausted = false;
 
   while (true) {
     const account = await selectBestAccount(env, 'ai_neurons', skipped, body.model);
@@ -435,6 +448,7 @@ app.post('/chat/completions', async (c) => {
       const errMsg = `Network error: ${netErr.message || netErr}`;
       logger.warn('openai', `[${rid}] Account ${account.name} ${errMsg}`);
       lastError = errMsg;
+      lastStatus = 502;
       try { await addAuditLog(env.DB, { account_id: account.id, action: 'ai_chat_completion', target: body.model, detail: `[${rid}] ${errMsg}`, status: 'error' }); } catch {}
       const count = (retryCount.get(account.id) || 0) + 1;
       retryCount.set(account.id, count);
@@ -446,9 +460,11 @@ app.post('/chat/completions', async (c) => {
     if (!cfResp.ok) {
       const errorText = await cfResp.text();
       lastError = errorText;
+      lastStatus = cfResp.status;
 
       if (isRetryableError(cfResp.status, errorText)) {
         if (isNeuronLimitError(errorText)) {
+          quotaExhausted = true;
           logger.warn('openai', `[${rid}] Account ${account.name} neuron limit hit (4006), rotating`);
           await setExhausted(env.DB, account.id, 'ai_neurons');
           await invalidateAiCache(env);
@@ -469,13 +485,14 @@ app.post('/chat/completions', async (c) => {
     return await processNonStreamSuccess(c, body, account, cfResp, rid);
   }
 
-  // 无账户可用
-  logger.error('openai', `[${rid}] All accounts exhausted. Last error: ${lastError}`);
-  return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  // 区分失败原因：真配额耗尽才报 quota_exceeded；否则返回真实上游/网络错误，避免误报
+  if (quotaExhausted) {
+    logger.error('openai', `[${rid}] All accounts exhausted. Last error: ${lastError}`);
+    return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  }
+  logger.error('openai', `[${rid}] Upstream error after retries: ${lastError}`);
+  return c.json({ error: { message: lastError || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus) } }, lastStatus as any);
 });
-
-/** 64x64 全白遮罩 PNG（base64），用于 SDXL 图生图时 mask_image 参数（白色 = 允许变换整个图像） */
-const WHITE_MASK_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAAAAACPAi4CAAAAKUlEQVR4nO3MQREAAAwCIPuX1hD77SAA6VEEAoFAIBAIBAKBQCAQfA8Gpwvw4pr3blgAAAAASUVORK5CYII=';
 
 app.post('/images/generations', async (c) => {
   const specifiedAccountId = c.req.header('X-Account-ID');
@@ -491,20 +508,70 @@ app.post('/images/generations', async (c) => {
   }
 
   // 根据模型族构建 CF 请求体（不同模型参数名不同）
-  // Flux 1: steps (非 num_steps)，不支持 width/height/guidance/negative_prompt
-  // Flux 2: 需要 multipart 表单格式，参数同 Flux 1
-  // SDXL: num_steps, image_b64 (非 image), 支持 width/height/guidance/negative_prompt/strength
+  // Flux 1: steps (非 num_steps)，不支持 width/height/guidance/negative_prompt；schema 无 image 字段，不支持图生图
+  // Flux 2: multipart 表单；steps 固定 4 不可调；支持 width/height/guidance/seed；图生图/editing 用 input_image_0（二进制参考图）
+  // SDXL/dreamshaper: schema 有 image_b64(string)，但 CF runtime 实测对 image_b64 返回 "image tensor not present" / "unexpected shape"，REST 通道不可用
+  // leonardo lucid/phoenix: schema 无 image 字段，不支持图生图
   const isFlux = model.includes('flux');
   const isFlux2 = model.includes('flux-2');
-  const isSD = model.includes('stable-diffusion');
+  // 仅 Flux 2 族支持图生图；其他模型收到参考图时显式拒绝，避免发到 CF 拿到模糊上游错误
+  if (image && !isFlux2) {
+    return c.json({ error: { message: `model ${model} does not support image-to-image via this API; only Flux 2 family (flux-2-*) supports img2img with a reference image`, type: 'invalid_request_error', code: 'img2img_unsupported' } }, 400);
+  }
+  // 预处理 base64 图片为 Uint8Array（用于 Flux 2 二进制附件或纯 base64 提取）
+  let cleanBase64 = '';
+  let imageBytes: Uint8Array | null = null;
+  if (image) {
+    cleanBase64 = image.replace(/^data:image\/[a-zA-Z+]+;base64,/, '').trim();
+    try { imageBytes = Uint8Array.from(atob(cleanBase64), c => c.charCodeAt(0)); } catch {}
+  }
+
+  /**
+   * 通过 magic bytes 检测图像真实格式。
+   * CF Flux 2 multipart 接收时会校验 Blob type 与文件头 magic bytes 是否一致，
+   * 硬编码 image/jpeg 但实际是 PNG 时会上游 3043。
+   */
+  const detectImageMime = (buf: Uint8Array): { mime: string; ext: string } => {
+    if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+      return { mime: 'image/jpeg', ext: 'jpg' };
+    }
+    if (
+      buf.length >= 8 &&
+      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+      buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+    ) {
+      return { mime: 'image/png', ext: 'png' };
+    }
+    if (
+      buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+    ) {
+      return { mime: 'image/webp', ext: 'webp' };
+    }
+    if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) {
+      return { mime: 'image/gif', ext: 'gif' };
+    }
+    return { mime: 'application/octet-stream', ext: 'bin' };
+  };
+  const isSD = model.includes('stable-diffusion') || model.includes('dreamshaper');
+  const isLucid = model.includes('lucid'); // lucid-origin 不支持 negative_prompt
   const cfBody: Record<string, any> = { prompt };
 
   if (isFlux) {
-    if (body.num_steps) cfBody.steps = body.num_steps;
+    if (isFlux2) {
+      // Flux 2 (klein/base/dev): multipart 表单；steps 固定为 4 不可调，不发送；图生图/editing 用 input_image_0（base64 参考图，官方字段名）
+      if (body.width) cfBody.width = body.width;
+      if (body.height) cfBody.height = body.height;
+      if (body.guidance) cfBody.guidance = body.guidance;
+      if (body.seed !== undefined) cfBody.seed = body.seed;
+    } else {
+      // Flux 1 (schnell 等): JSON，参数名为 steps（非 num_steps，官方已确认，仅 prompt+steps，无 seed）
+      if (body.num_steps) cfBody.steps = body.num_steps;
+    }
   } else if (isSD) {
-    if (image) {
-      cfBody.image_b64 = image;
-      cfBody.mask_image = WHITE_MASK_PNG;
+    if (cleanBase64) {
+      cfBody.image_b64 = cleanBase64; // SD 族 img2img：image_b64（官方 schema 字段，非 image）；纯 img2img 无需 mask
     }
     if (body.width) cfBody.width = body.width;
     if (body.height) cfBody.height = body.height;
@@ -512,13 +579,15 @@ app.post('/images/generations', async (c) => {
     if (body.guidance) cfBody.guidance = body.guidance;
     if (body.negative_prompt) cfBody.negative_prompt = body.negative_prompt;
     if (body.strength) cfBody.strength = body.strength;
+    if (body.seed !== undefined) cfBody.seed = body.seed;
   } else {
-    if (image) cfBody.image = image;
+    if (cleanBase64) cfBody.image_b64 = cleanBase64;
     if (body.width) cfBody.width = body.width;
     if (body.height) cfBody.height = body.height;
     if (body.num_steps) cfBody.num_steps = body.num_steps;
     if (body.guidance) cfBody.guidance = body.guidance;
-    if (body.negative_prompt) cfBody.negative_prompt = body.negative_prompt;
+    if (!isLucid && body.negative_prompt) cfBody.negative_prompt = body.negative_prompt;
+    if (body.seed !== undefined) cfBody.seed = body.seed;
   }
 
   /**
@@ -527,10 +596,17 @@ app.post('/images/generations', async (c) => {
    */
   const buildRequest = (): { body: string | FormData; contentType?: string } => {
     if (isFlux2) {
-      // Flux 2 模型需要 multipart/form-data，Workers fetch 原生支持 FormData
+      // Flux 2 模型需要 multipart/form-data，Workers fetch 原生支持 FormData；字段为 prompt + 可选 image(文件附件) / width/height/guidance/seed
       const formData = new FormData();
       formData.append('prompt', prompt);
-      if (cfBody.steps) formData.append('steps', String(cfBody.steps));
+      if (imageBytes && imageBytes.length > 0) {
+        const { mime: imgMime, ext: imgExt } = detectImageMime(imageBytes);
+        formData.append('input_image_0', new Blob([imageBytes], { type: imgMime }), `input.${imgExt}`);
+      }
+      if (cfBody.width !== undefined) formData.append('width', String(cfBody.width));
+      if (cfBody.height !== undefined) formData.append('height', String(cfBody.height));
+      if (cfBody.guidance !== undefined) formData.append('guidance', String(cfBody.guidance));
+      if (cfBody.seed !== undefined) formData.append('seed', String(cfBody.seed));
       return { body: formData };
     }
     return { body: JSON.stringify(cfBody), contentType: 'application/json' };
@@ -550,7 +626,7 @@ app.post('/images/generations', async (c) => {
   /** 处理 CF 图片生成成功响应 */
   async function handleSuccess(account: any, cfResp: Response): Promise<Response> {
     const contentType = cfResp.headers.get('content-type') || '';
-    let b64Image = '';
+    let b64Image: string;
 
     logger.debug('openai', `[AI Image][${rid}] CF response content-type: ${contentType}, status: ${cfResp.status}`);
 
@@ -631,7 +707,7 @@ app.post('/images/generations', async (c) => {
       const timeoutId = setTimeout(() => controller.abort(), 300000);
       cfResp = await fetch(cfUrl, {
         method: 'POST',
-        headers: { 'Accept': 'application/json', ...(reqCt ? { 'Content-Type': reqCt } : {}), ...authHeaders },
+        headers: { ...(reqCt ? { 'Content-Type': reqCt } : {}), ...authHeaders },
         body: reqBody,
         signal: controller.signal,
       });
@@ -659,7 +735,11 @@ app.post('/images/generations', async (c) => {
   // --- 自动轮换账户 ---
   const skipped = new Set<number>();
   let lastError = '';
+  let lastStatus = 502; // 兜底：上游/网络错误默认 502
+  let quotaExhaustedCount = 0; // 因 4006 配额耗尽的账户数
+  let totalTriedCount = 0; // 总共尝试过的账户数
 
+  const accountErrors: Array<{ account: string; status: number; error: string }> = [];
   while (true) {
     const account = await selectBestAccount(env, 'ai_neurons', skipped, model);
     if (!account) break;
@@ -668,13 +748,14 @@ app.post('/images/generations', async (c) => {
     const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${account.account_id}/ai/run/${model}`;
     const authHeaders = await getAuthHeaders(account, env.ENCRYPTION_KEY);
     const { body: reqBody, contentType: reqCt } = buildRequest();
+    totalTriedCount++;
     let cfResp: Response;
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 300000);
       cfResp = await fetch(cfUrl, {
         method: 'POST',
-        headers: { 'Accept': 'application/json', ...(reqCt ? { 'Content-Type': reqCt } : {}), ...authHeaders },
+        headers: { ...(reqCt ? { 'Content-Type': reqCt } : {}), ...authHeaders },
         body: reqBody,
         signal: controller.signal,
       });
@@ -683,6 +764,8 @@ app.post('/images/generations', async (c) => {
       const errMsg = `Network error: ${netErr.message || netErr}`;
       logger.warn('openai', `[AI Image][${rid}] Account ${account.name} ${errMsg}`);
       lastError = errMsg;
+      lastStatus = 502;
+      accountErrors.push({ account: account.name, status: 502, error: errMsg });
       try { await addAuditLog(env.DB, { account_id: account.id, action: 'ai_image_generation', target: model, detail: `[${rid}] ${errMsg}`, status: 'error' }); } catch {}
       skipped.add(account.id);
       continue;
@@ -692,9 +775,12 @@ app.post('/images/generations', async (c) => {
       const errorText = await cfResp.text();
       logger.warn('openai', `[AI Image][${rid}] CF upstream error ${cfResp.status} for account ${account.name}: ${errorText.slice(0, 1000)}`);
       lastError = errorText;
+      lastStatus = cfResp.status;
+      accountErrors.push({ account: account.name, status: cfResp.status, error: extractCfError(errorText) });
 
       if (isRetryableError(cfResp.status, errorText)) {
         if (isNeuronLimitError(errorText)) {
+          quotaExhaustedCount++;
           logger.warn('openai', `[AI Image][${rid}] Account ${account.name} neuron limit hit (4006), rotating`);
           await setExhausted(env.DB, account.id, 'ai_neurons');
           await invalidateAiCache(env);
@@ -708,16 +794,29 @@ app.post('/images/generations', async (c) => {
         continue;
       }
 
-      return c.json({ error: { message: extractCfError(errorText), type: 'upstream_error', code: upstreamStatusToCode(cfResp.status) } }, cfResp.status as any);
+      return c.json({ error: { message: extractCfError(errorText), type: 'upstream_error', code: upstreamStatusToCode(cfResp.status), details: accountErrors } }, cfResp.status as any);
     }
 
     // 成功
     return await handleSuccess(account, cfResp);
   }
 
-  // 无账户可用
-  logger.error('openai', `[AI Image][${rid}] All accounts exhausted. Last error: ${lastError}`);
-  return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  // 区分失败原因：只有所有尝试过的账户全部是 4006 配额耗尽，才报 quota_exceeded；
+  // 若有账户因参数或内部错误失败，必须暴露真实上游错误和详情，避免误报耗尽
+  if (quotaExhaustedCount > 0 && quotaExhaustedCount === totalTriedCount) {
+    logger.error('openai', `[AI Image][${rid}] All accounts exhausted. Last error: ${lastError}`);
+    return c.json({
+      error: {
+        message: 'All accounts have reached daily neuron limit',
+        type: 'quota_exceeded',
+        code: 'ALL_ACCOUNTS_EXHAUSTED',
+        details: accountErrors,
+        last_error: extractCfError(lastError) || 'Unknown error',
+      },
+    }, 429);
+  }
+  logger.error('openai', `[AI Image][${rid}] Upstream error after retries: ${lastError}, details: ${JSON.stringify(accountErrors)}`);
+  return c.json({ error: { message: extractCfError(lastError) || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus), details: accountErrors } }, lastStatus as any);
 });
 
 // ================================================================
@@ -756,7 +855,7 @@ app.post('/audio/speech', async (c) => {
   /** 按模型 schema 动态构造 CF 请求体（melotts 用 prompt+lang，aura 系列用 text+speaker+encoding） */
   let resolvedSpeaker: string | undefined;
   const buildTtsBody = async (account: any): Promise<Record<string, any>> => {
-    const inputSchema = await getModelInputSchema(account, model, env.ENCRYPTION_KEY);
+    const inputSchema = await getModelInputSchema(account, model, env.ENCRYPTION_KEY, env.KV);
     const { body, speaker } = buildTtsCfBody(inputSchema, input, voice, VOICE_MAP, {
       encoding,
       container,
@@ -783,7 +882,7 @@ app.post('/audio/speech', async (c) => {
       return btoa(binary);
     };
 
-    let b64Audio = '';
+    let b64Audio: string;
     let audioContentType = rawContentType;
 
     if (rawContentType.includes('json')) {
@@ -806,7 +905,7 @@ app.post('/audio/speech', async (c) => {
         };
         b64Audio = findBase64(json);
       } catch {
-        b64Audio = toBase64(new TextEncoder().encode(text).buffer);
+        b64Audio = toBase64(new TextEncoder().encode(text).buffer as ArrayBuffer);
         audioContentType = 'audio/mpeg';
       }
     } else {
@@ -815,7 +914,7 @@ app.post('/audio/speech', async (c) => {
 
     // 音频为空：明确返回 502 错误，避免前端拿到空 data URL 播放 0s
     if (!b64Audio) {
-      logger.warn(`[AI TTS][${rid}] ${model} 返回空音频 (content-type=${rawContentType}, bytes=${arrayBuffer.byteLength})`);
+      logger.warn('openai', `[AI TTS][${rid}] ${model} 返回空音频 (content-type=${rawContentType}, bytes=${arrayBuffer.byteLength})`);
       return c.json({
         error: {
           message: `TTS 模型未返回音频数据（content-type=${rawContentType}, bytes=${arrayBuffer.byteLength}）`,
@@ -893,6 +992,8 @@ app.post('/audio/speech', async (c) => {
   // --- 自动轮换账户 ---
   const skipped = new Set<number>();
   let lastError = '';
+  let lastStatus = 502; // 兜底：上游/网络错误默认 502
+  let quotaExhausted = false; // 是否因神经元额度耗尽而失败
   while (true) {
     const account = await selectBestAccount(env, 'ai_neurons', skipped, model);
     if (!account) break;
@@ -914,6 +1015,7 @@ app.post('/audio/speech', async (c) => {
       clearTimeout(timeoutId);
     } catch (netErr: any) {
       lastError = `Network error: ${netErr.message}`;
+      lastStatus = 502;
       skipped.add(account.id);
       continue;
     }
@@ -921,8 +1023,10 @@ app.post('/audio/speech', async (c) => {
     if (!cfResp.ok) {
       const errorText = await cfResp.text();
       lastError = extractCfError(errorText);
+      lastStatus = cfResp.status;
       if (isRetryableError(cfResp.status, errorText)) {
         if (isNeuronLimitError(errorText)) {
+          quotaExhausted = true;
           await setExhausted(env.DB, account.id, 'ai_neurons');
           await invalidateAiCache(env);
         }
@@ -935,8 +1039,194 @@ app.post('/audio/speech', async (c) => {
     return await handleTtsSuccess(account, cfResp);
   }
 
-  logger.error('openai', `[AI TTS][${rid}] All accounts exhausted. Last error: ${lastError}`);
-  return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  // 区分失败原因：真配额耗尽才报 quota_exceeded；否则返回真实上游/网络错误，避免误报
+  if (quotaExhausted) {
+    logger.error('openai', `[AI TTS][${rid}] All accounts exhausted. Last error: ${lastError}`);
+    return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  }
+  logger.error('openai', `[AI TTS][${rid}] Upstream error after retries: ${lastError}`);
+  return c.json({ error: { message: lastError || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus) } }, lastStatus as any);
+});
+
+// ================================================================
+// POST /audio/transcriptions — 语音转文本 ASR（OpenAI-compatible）
+// ================================================================
+// 仅 whisper 系列（whisper / whisper-tiny-en / whisper-large-v3-turbo）支持同步 JSON 转写：
+//   whisper、whisper-tiny-en 的 audio 为 0-255 字节数组；whisper-large-v3-turbo 的 audio 为 base64 字符串，prompt→initial_prompt。
+// deepgram nova-3 / deepgram flux 为实时流式模型（realtime=true），pipecat smart-turn-v2 为 VAD 模型，
+// 均无法通过同步 /ai/run JSON 端点调用，本路由直接拒绝。
+// OpenAI 原版用 multipart/form-data 上传 file，本实现统一为 JSON { audio: <base64> }。
+app.post('/audio/transcriptions', async (c) => {
+  const specifiedAccountId = c.req.header('X-Account-ID');
+  const { model, audio, file, language, prompt, response_format } = await c.req.json() as any;
+  const audioB64 = audio || file;
+  const rid = getRequestId(c);
+  const env = c.env;
+
+  if (!model || !audioB64) {
+    return c.json({
+      error: { message: 'model and audio (base64 string) are required', type: 'invalid_request_error', code: 'bad_request' },
+    }, 400);
+  }
+
+  // 模型族识别：仅 whisper 系列支持同步 JSON 转写；deepgram（nova-3/flux）为实时流式模型，
+  // pipecat smart-turn-v2 为 VAD（话轮检测）模型，均无法通过同步 /ai/run JSON 端点调用，直接拒绝。
+  const isWhisperTurbo = model.includes('whisper-large-v3-turbo');
+  const isWhisperLegacy = model.includes('whisper') && !isWhisperTurbo;
+  const isSyncUnsupported = model.includes('nova-3') || model.includes('deepgram/flux') || model.includes('smart-turn') || model.includes('pipecat');
+  if (isSyncUnsupported) {
+    return c.json({
+      error: {
+        message: `模型 ${model} 为实时流式/VAD 模型，不支持同步 /audio/transcriptions 调用`,
+        type: 'invalid_request_error',
+        code: 'unsupported_model',
+      },
+    }, 400);
+  }
+
+  const extractCfError = (raw: string): string => {
+    try {
+      const json = JSON.parse(raw);
+      if (json.errors?.[0]?.message) return json.errors[0].message;
+      if (json.error?.message) return json.error.message;
+      if (json.message) return json.message;
+    } catch {}
+    return raw;
+  };
+
+  const cfBody: Record<string, any> = {};
+  if (isWhisperLegacy) {
+    // whisper / whisper-tiny-en：audio 为 0-255 字节数组（非 base64），且无 language/prompt
+    const binary = atob(audioB64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    cfBody.audio = Array.from(bytes);
+  } else {
+    // whisper-large-v3-turbo：audio 为 base64 字符串；prompt 映射为 initial_prompt
+    cfBody.audio = audioB64;
+    if (language) cfBody.language = language;
+    if (prompt) cfBody.initial_prompt = prompt;
+  }
+
+  const handleAsrSuccess = async (account: any, cfResp: Response): Promise<Response> => {
+    const json = await cfResp.json() as any;
+    const rawText = json?.result?.text ?? json?.text ?? json?.result?.output;
+    if (rawText === undefined || rawText === null) {
+      logger.error('openai', `[AI ASR][${rid}] CF returned empty transcription`);
+      return c.json({ error: { message: 'ASR 模型未返回文本', type: 'upstream_error', code: 'EMPTY_TEXT' } }, 502);
+    }
+    const text = String(rawText);
+    // Worker 运行时无 Buffer，用 base64 长度估算原始字节数（4 字符→3 字节，去掉 padding）
+    const audioBytes = Math.floor(audioB64.replace(/=+$/, '').length * 3 / 4);
+    const neurons = estimateAsrNeurons(audioBytes, model);
+    await incrementQuota(env.DB, account.id, 'ai_neurons', neurons);
+    await clearOptimistic(env, account.id);
+    await invalidateAiCache(env);
+    try {
+      await addAuditLog(env.DB, {
+        account_id: account.id, action: 'ai_asr_transcription', target: model,
+        detail: `[${rid}] bytes=${audioBytes} lang=${language || 'auto'} neurons=${neurons}`,
+        status: 'success',
+      });
+    } catch {}
+
+    if (response_format === 'text') {
+      return c.body(text, 200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    }
+    return c.json({ text, neurons, task: 'transcribe', language: language || null });
+  };
+
+  // --- X-Account-ID 指定账户 ---
+  if (specifiedAccountId && specifiedAccountId !== 'auto') {
+    const allAccounts = await getActiveAccountsByFeature(env.DB, 'ai');
+    const specified = allAccounts.find(a => a.account_id === specifiedAccountId);
+    if (!specified) {
+      return c.json({
+        error: { message: `Account ${specifiedAccountId} not found or inactive`, type: 'invalid_request_error', code: 'ACCOUNT_NOT_FOUND' },
+      }, 404);
+    }
+    const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${specified.account_id}/ai/run/${model}`;
+    const authHeaders = await getAuthHeaders(specified, env.ENCRYPTION_KEY);
+    let cfResp: Response;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000);
+      cfResp = await fetch(cfUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify(cfBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (netErr: any) {
+      logger.error('openai', `[AI ASR][${rid}] Network error: ${netErr.message}`);
+      return c.json({ error: { message: `Network error: ${netErr.message}`, type: 'upstream_error', code: 'NETWORK_ERROR' } }, 502);
+    }
+    if (!cfResp.ok) {
+      const errorText = await cfResp.text();
+      logger.error('openai', `[AI ASR][${rid}] CF upstream error ${cfResp.status}: ${errorText.slice(0, 500)}`);
+      if (isNeuronLimitError(errorText)) {
+        await setExhausted(env.DB, specified.id, 'ai_neurons');
+        await invalidateAiCache(env);
+      }
+      return c.json({ error: { message: extractCfError(errorText), type: 'upstream_error', code: upstreamStatusToCode(cfResp.status) } }, cfResp.status as any);
+    }
+    return await handleAsrSuccess(specified, cfResp);
+  }
+
+  // --- 自动轮换账户 ---
+  const skipped = new Set<number>();
+  let lastError = '';
+  let lastStatus = 502; // 兜底：上游/网络错误默认 502
+  let quotaExhausted = false; // 是否因神经元额度耗尽而失败
+  while (true) {
+    const account = await selectBestAccount(env, 'ai_neurons', skipped, model);
+    if (!account) break;
+    if (!account.account_id) { skipped.add(account.id); continue; }
+    const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${account.account_id}/ai/run/${model}`;
+    const authHeaders = await getAuthHeaders(account, env.ENCRYPTION_KEY);
+    let cfResp: Response;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000);
+      cfResp = await fetch(cfUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify(cfBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (netErr: any) {
+      lastError = `Network error: ${netErr.message}`;
+      lastStatus = 502;
+      skipped.add(account.id);
+      continue;
+    }
+    if (!cfResp.ok) {
+      const errorText = await cfResp.text();
+      lastError = extractCfError(errorText);
+      lastStatus = cfResp.status;
+      if (isRetryableError(cfResp.status, errorText)) {
+        if (isNeuronLimitError(errorText)) {
+          quotaExhausted = true;
+          await setExhausted(env.DB, account.id, 'ai_neurons');
+          await invalidateAiCache(env);
+        }
+        skipped.add(account.id);
+        continue;
+      }
+      return c.json({ error: { message: extractCfError(errorText), type: 'upstream_error', code: upstreamStatusToCode(cfResp.status) } }, cfResp.status as any);
+    }
+    return await handleAsrSuccess(account, cfResp);
+  }
+
+  // 区分失败原因：真配额耗尽才报 quota_exceeded；否则返回真实上游/网络错误，避免误报
+  if (quotaExhausted) {
+    logger.error('openai', `[AI ASR][${rid}] All accounts exhausted. Last error: ${lastError}`);
+    return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  }
+  logger.error('openai', `[AI ASR][${rid}] Upstream error after retries: ${lastError}`);
+  return c.json({ error: { message: lastError || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus) } }, lastStatus as any);
 });
 
 // ================================================================
@@ -1046,6 +1336,8 @@ app.post('/translations', async (c) => {
 
   const skipped = new Set<number>();
   let lastError = '';
+  let lastStatus = 502; // 兜底：上游/网络错误默认 502
+  let quotaExhausted = false; // 是否因神经元额度耗尽而失败
   while (true) {
     const account = await selectBestAccount(env, 'ai_neurons', skipped, model);
     if (!account) break;
@@ -1066,6 +1358,7 @@ app.post('/translations', async (c) => {
       clearTimeout(timeoutId);
     } catch (netErr: any) {
       lastError = `Network error: ${netErr.message}`;
+      lastStatus = 502;
       skipped.add(account.id);
       continue;
     }
@@ -1073,8 +1366,10 @@ app.post('/translations', async (c) => {
     if (!cfResp.ok) {
       const errorText = await cfResp.text();
       lastError = extractCfError(errorText);
+      lastStatus = cfResp.status;
       if (isRetryableError(cfResp.status, errorText)) {
         if (isNeuronLimitError(errorText)) {
+          quotaExhausted = true;
           await setExhausted(env.DB, account.id, 'ai_neurons');
           await invalidateAiCache(env);
         }
@@ -1087,8 +1382,206 @@ app.post('/translations', async (c) => {
     return await handleTranslationSuccess(account, cfResp);
   }
 
-  logger.error('openai', `[AI Translation][${rid}] All accounts exhausted. Last error: ${lastError}`);
-  return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  // 区分失败原因：真配额耗尽才报 quota_exceeded；否则返回真实上游/网络错误，避免误报
+  if (quotaExhausted) {
+    logger.error('openai', `[AI Translation][${rid}] All accounts exhausted. Last error: ${lastError}`);
+    return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  }
+  logger.error('openai', `[AI Translation][${rid}] Upstream error after retries: ${lastError}`);
+  return c.json({ error: { message: lastError || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus) } }, lastStatus as any);
+});
+
+// ================================================================
+// POST /embeddings — 文本嵌入（OpenAI-compatible）
+// ================================================================
+// Cloudflare Workers AI 嵌入模型（bge 系列、bge-m3、qwen3-embedding、plamo-embedding、embeddinggemma 等）
+// 通过 /ai/run/{model} 调用，请求体 { text: string|string[] }，响应 { result: { data: number[][], shape } }。
+// 经官方 schema 核验：data 直接为向量数组（每个元素是一条文本的向量），部分旧模型可能为 [{embedding,index}]。
+// 这里将其转换为 OpenAI 的 /v1/embeddings 格式（object/list + data[].embedding + usage）。
+const EMBEDDINGS_EXTRACT_ERROR = (raw: string): string => {
+  try {
+    const json = JSON.parse(raw);
+    if (json.errors?.[0]?.message) return json.errors[0].message;
+    if (json.error?.message) return json.error.message;
+    if (json.message) return json.message;
+  } catch {}
+  return raw;
+};
+
+/** 将 float 数组编码为 OpenAI base64 编码格式（Float32 little-endian） */
+function floatsToBase64(floats: number[]): string {
+  const buf = new Float32Array(floats.length);
+  for (let i = 0; i < floats.length; i++) buf[i] = floats[i];
+  const bytes = new Uint8Array(buf.buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)) as any);
+  }
+  return btoa(binary);
+}
+
+app.post('/embeddings', async (c) => {
+  const specifiedAccountId = c.req.header('X-Account-ID');
+  const { model, input, encoding_format } = await c.req.json();
+  const rid = getRequestId(c);
+  const env = c.env;
+
+  if (!model || input === undefined || input === null) {
+    return c.json({
+      error: { message: 'model and input are required', type: 'invalid_request_error', code: 'bad_request' },
+    }, 400);
+  }
+
+  // 规范化 input：OpenAI 支持 string 或 string[]（token 数组极少见，统一按字符串处理）
+  const texts: string[] = Array.isArray(input) ? input.map(String) : [String(input)];
+  const useBase64 = encoding_format === 'base64';
+
+  /** 处理 CF 嵌入成功响应 → 转 OpenAI 格式 */
+  const handleEmbeddingsSuccess = async (account: any, cfResp: Response): Promise<Response> => {
+    const json = await cfResp.json() as any;
+    const result = json?.result || {};
+
+    // 经官方 schema 核验：Workers AI 嵌入模型响应 result.data 为 number[][]（直接是向量数组，
+    // 如 bge 系列 / bge-m3 / qwen3-embedding / plamo / embeddinggemma 均为此结构）；
+    // 个别旧模型可能为 [{ embedding, index }] 对象数组，两者均兼容。
+    let rawData: any[] = Array.isArray(result.data) ? result.data : [];
+    if (rawData.length === 0 && Array.isArray(result.embeddings)) {
+      rawData = result.embeddings.map((emb: any, i: number) => ({ embedding: emb, index: i }));
+    }
+
+    const firstRaw = Array.isArray(rawData[0]) ? rawData[0] : (rawData[0]?.embedding ?? []);
+    const dims = firstRaw.length || 0;
+
+    const data = rawData.map((d: any, i: number) => {
+      // d 为 number[]（number[][] 情形）或 { embedding, index } 对象
+      const embedding: number[] = Array.isArray(d) ? d : (d?.embedding ?? []);
+      return {
+        object: 'embedding',
+        embedding: useBase64 ? floatsToBase64(embedding) : embedding,
+        index: typeof d?.index === 'number' ? d.index : i,
+      };
+    });
+
+    const neurons = estimateEmbeddingsNeurons(model, texts);
+    await incrementQuota(env.DB, account.id, 'ai_neurons', neurons);
+    await clearOptimistic(env, account.id);
+    await invalidateAiCache(env);
+
+    // 估算 token 用量（CF 嵌入响应不含 usage）
+    const estTokens = Math.max(1, Math.ceil(texts.reduce((s, t) => s + (t?.length || 0), 0) / 4));
+    try {
+      await addAuditLog(env.DB, {
+        account_id: account.id, action: 'ai_embeddings', target: model,
+        detail: `[${rid}] inputs=${texts.length} dims=${dims} tokens≈${estTokens} neurons=${neurons}`,
+        status: 'success',
+      });
+    } catch {}
+
+    return c.json({
+      object: 'list',
+      data,
+      model,
+      usage: { prompt_tokens: estTokens, total_tokens: estTokens },
+    });
+  };
+
+  // --- X-Account-ID 指定账户 ---
+  if (specifiedAccountId && specifiedAccountId !== 'auto') {
+    const allAccounts = await getActiveAccountsByFeature(env.DB, 'ai');
+    const specified = allAccounts.find(a => a.account_id === specifiedAccountId);
+    if (!specified) {
+      return c.json({
+        error: { message: `Account ${specifiedAccountId} not found or inactive`, type: 'invalid_request_error', code: 'ACCOUNT_NOT_FOUND' },
+      }, 404);
+    }
+
+    const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${specified.account_id}/ai/run/${model}`;
+    const authHeaders = await getAuthHeaders(specified, env.ENCRYPTION_KEY);
+    let cfResp: Response;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      cfResp = await fetch(cfUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ text: texts }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (netErr: any) {
+      logger.error('openai', `[AI Embeddings][${rid}] Network error: ${netErr.message}`);
+      return c.json({ error: { message: `Network error: ${netErr.message}`, type: 'upstream_error', code: 'NETWORK_ERROR' } }, 502);
+    }
+
+    if (!cfResp.ok) {
+      const errorText = await cfResp.text();
+      logger.error('openai', `[AI Embeddings][${rid}] CF upstream error ${cfResp.status}: ${errorText.slice(0, 500)}`);
+      if (isNeuronLimitError(errorText)) {
+        await setExhausted(env.DB, specified.id, 'ai_neurons');
+        await invalidateAiCache(env);
+      }
+      return c.json({ error: { message: EMBEDDINGS_EXTRACT_ERROR(errorText), type: 'upstream_error', code: upstreamStatusToCode(cfResp.status) } }, cfResp.status as any);
+    }
+    return await handleEmbeddingsSuccess(specified, cfResp);
+  }
+
+  // --- 自动轮换账户 ---
+  const skipped = new Set<number>();
+  let lastError = '';
+  let lastStatus = 502; // 兜底：上游/网络错误默认 502
+  let quotaExhausted = false; // 是否因神经元额度耗尽而失败
+  while (true) {
+    const account = await selectBestAccount(env, 'ai_neurons', skipped, model);
+    if (!account) break;
+    if (!account.account_id) { skipped.add(account.id); continue; }
+
+    const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${account.account_id}/ai/run/${model}`;
+    const authHeaders = await getAuthHeaders(account, env.ENCRYPTION_KEY);
+    let cfResp: Response;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      cfResp = await fetch(cfUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ text: texts }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (netErr: any) {
+      lastError = `Network error: ${netErr.message}`;
+      lastStatus = 502;
+      skipped.add(account.id);
+      continue;
+    }
+
+    if (!cfResp.ok) {
+      const errorText = await cfResp.text();
+      lastError = EMBEDDINGS_EXTRACT_ERROR(errorText);
+      lastStatus = cfResp.status;
+      if (isRetryableError(cfResp.status, errorText)) {
+        if (isNeuronLimitError(errorText)) {
+          quotaExhausted = true;
+          await setExhausted(env.DB, account.id, 'ai_neurons');
+          await invalidateAiCache(env);
+        }
+        skipped.add(account.id);
+        continue;
+      }
+      return c.json({ error: { message: EMBEDDINGS_EXTRACT_ERROR(errorText), type: 'upstream_error', code: upstreamStatusToCode(cfResp.status) } }, cfResp.status as any);
+    }
+
+    return await handleEmbeddingsSuccess(account, cfResp);
+  }
+
+  // 区分失败原因：真配额耗尽才报 quota_exceeded；否则返回真实上游/网络错误，避免误报
+  if (quotaExhausted) {
+    logger.error('openai', `[AI Embeddings][${rid}] All accounts exhausted. Last error: ${lastError}`);
+    return c.json({ error: { message: 'All accounts exhausted', type: 'quota_exceeded', code: 'ALL_ACCOUNTS_EXHAUSTED', last_error: lastError || 'Unknown error' } }, 429);
+  }
+  logger.error('openai', `[AI Embeddings][${rid}] Upstream error after retries: ${lastError}`);
+  return c.json({ error: { message: lastError || 'All accounts failed', type: 'upstream_error', code: upstreamStatusToCode(lastStatus) } }, lastStatus as any);
 });
 
 export default app;

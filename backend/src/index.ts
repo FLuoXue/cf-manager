@@ -29,6 +29,7 @@ import { initBrowserRateLimiter } from './services/browserRateLimiter';
 import { v1RequestLogger } from './middleware/v1Logger';
 import { apiRequestLogger } from './middleware/apiLogger';
 import { requestIdMiddleware } from './middleware/requestId';
+import { canonicalizeMiddleware } from './middleware/canonicalize';
 import { appLogger } from './services/logger';
 import cron from 'node-cron';
 import { getEnabledCatalogSources } from './models/catalogSource';
@@ -43,6 +44,10 @@ app.use(cors({
   credentials: false,
 }));
 app.use(express.json({ limit: '100mb' }));
+
+// 路径规范化（P1-4）：在 auth 与路由匹配之前改写 req.url，确保 Docker/Worker 两端对
+// 双斜杠/尾部斜杠/大小写变形路径的匹配结果一致，避免绕过或 404/500 差异。
+app.use(canonicalizeMiddleware);
 
 // Health check — before auth so Docker healthcheck works without API_SECRET
 app.get('/api/health', (_req, res) => {
@@ -107,7 +112,18 @@ app.use('/api/v1', v1RequestLogger);
 app.use('/api/v1', openaiRouter);
 app.use('/api/v1', v1ErrorHandler); // OpenAI-format error handler (before global errorHandler)
 
-app.get('/api/quota', async (_req: Request, res: Response, next: NextFunction) => {
+app.get('/api/quota', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const wantsSync = req.query.sync === 'true' || req.query.refresh === 'true';
+    if (wantsSync) {
+      await syncUsageFromCloudflare();
+      invalidateAiCache();
+    }
+    res.json(getQuotaSummary());
+  } catch (err) { next(err); }
+});
+
+app.post('/api/quota/sync', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     await syncUsageFromCloudflare();
     invalidateAiCache();
@@ -147,12 +163,14 @@ async function start() {
     }
   });
   app.listen(config.port, () => {
-    appLogger.info(`Server running on port ${config.port}`);
+    appLogger.info(`Server running on port ${config.port} (ready)`);
   });
 }
 
 process.on('uncaughtException', (err) => {
   appLogger.error(`[UNCAUGHT] ${err}`);
+  // 进程处于未知状态，交由编排器（Docker/K8s）重启，避免静默损坏
+  process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
   appLogger.error(`[UNHANDLED_REJECTION] ${err}`);

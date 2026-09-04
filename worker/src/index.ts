@@ -5,6 +5,8 @@ import { authMiddleware } from './middleware/auth';
 import { errorHandler } from './middleware/errorHandler';
 import { v1ErrorHandler } from './middleware/v1ErrorHandler';
 import { requestIdMiddleware } from './middleware/requestId';
+import { canonicalizeMiddleware } from './middleware/canonicalize';
+import { apiLoggerMiddleware } from './middleware/apiLogger';
 import { responseWrapper } from './middleware/responseWrapper';
 import { getRecentLogs, queryLogs, getDistinctActions } from './db/models';
 import { getEnabledCatalogSources, updateCatalogSource } from './db/models';
@@ -31,31 +33,44 @@ app.use('*', cors({
   exposeHeaders: ['Content-Length', 'X-Request-Id'],
   maxAge: 86400,
 }));
+app.use('*', requestIdMiddleware);
+// 路径规范化（P1-4）：在 auth 与路由匹配之前改写路径，确保 Docker/Worker 两端对
+// 双斜杠/尾部斜杠/大小写变形路径的匹配结果一致，避免绕过或 404/500 差异。
+app.use('*', canonicalizeMiddleware);
 app.use('*', errorHandler);
 
 // OpenAI-compatible routes (MUST be registered BEFORE responseWrapper)
 // These routes return OpenAI-standard format and should not be wrapped
-app.use('/v1/*', requestIdMiddleware);
+app.use('/v1/*', apiLoggerMiddleware);
 app.use('/v1/*', authMiddleware);
+app.use('/v1/*', v1ErrorHandler);
 app.route('/v1', openaiRouter);
 app.route('/v1/browser', browserRenderRouter);
-app.use('/v1/*', v1ErrorHandler);
 
-app.use('/api/v1/*', requestIdMiddleware);
+app.use('/api/v1/*', apiLoggerMiddleware);
 app.use('/api/v1/*', authMiddleware);
+app.use('/api/v1/*', v1ErrorHandler);
 app.route('/api/v1', openaiRouter);
 app.route('/api/v1/browser', browserRenderRouter);
-app.use('/api/v1/*', v1ErrorHandler);
 
 // Other API routes (with responseWrapper)
+app.use('/api/*', apiLoggerMiddleware);
 app.use('/api/*', responseWrapper);
 app.use('/api/*', authMiddleware);
 
 app.onError((err: any, c) => {
   const status = err.statusCode || err.status || 500;
   const message = err.message || 'Internal server error';
+  const code = err.code || 'INTERNAL_ERROR';
   console.error(`[OnError] ${c.req.method} ${c.req.path}: ${message}`);
-  return c.json({ error: { code: status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR', message } }, status as any);
+  const path = c.req.path;
+  if (path.startsWith('/v1') || path.startsWith('/api/v1')) {
+    return c.json(
+      { error: { message, type: status >= 500 ? 'server_error' : 'invalid_request_error', code } },
+      status as any,
+    );
+  }
+  return c.json({ success: false, error: { code, message } }, status as any);
 });
 
 app.get('/api/health', async (c) => {
@@ -67,6 +82,7 @@ app.get('/api/health', async (c) => {
       ENCRYPTION_KEY: !!c.env.ENCRYPTION_KEY,
       API_SECRET: !!c.env.API_SECRET,
       ASSETS: !!c.env.ASSETS,
+      KV: !!c.env.KV,
     },
   };
   if (c.env.DB) {
@@ -92,6 +108,16 @@ app.route('/api/tunnels', tunnelsRouter);
 app.route('/api/ai', aiRouter);
 
 app.get('/api/quota', async (c) => {
+  const wantsSync = c.req.query('sync') === 'true' || c.req.query('refresh') === 'true';
+  if (wantsSync) {
+    await syncUsageFromCloudflare(c.env.DB, c.env.ENCRYPTION_KEY);
+    await invalidateAiCache(c.env);
+  }
+  const summary = await getQuotaSummary(c.env.DB, c.env.ENCRYPTION_KEY);
+  return c.json(summary);
+});
+
+app.post('/api/quota/sync', async (c) => {
   await syncUsageFromCloudflare(c.env.DB, c.env.ENCRYPTION_KEY);
   await invalidateAiCache(c.env);
   const summary = await getQuotaSummary(c.env.DB, c.env.ENCRYPTION_KEY);
@@ -144,7 +170,7 @@ export { app };
 
 export default {
   fetch: app.fetch,
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
     // Periodic catalog refresh every 6 hours
     try {
       const sources = await getEnabledCatalogSources(env.DB);

@@ -193,7 +193,7 @@ export async function deployWorker(
   try {
     resp = await cfFetchRaw(account, `/accounts/${accountId}/workers/scripts/${name}`, encryptionKey, { method: 'PUT', body: form });
   } catch (err: any) {
-    throw new Error(`worker-script-upload failed: ${describeError(err)}`);
+    throw new Error(`worker-script-upload failed: ${describeError(err)}`, { cause: err });
   }
   if (!resp.ok) { const errBody = await resp.text(); throw new Error(`Worker 部署失败 (${resp.status}): ${errBody}`); }
 

@@ -58,6 +58,9 @@ app.get('/domains/:domain/records', async (c) => {
 app.post('/domains/:domain/records', async (c) => {
   const domain = c.req.param('domain');
   const { account, zoneId } = await findAccountByDomain(c.env.DB, domain, c.env.ENCRYPTION_KEY, c.env.KV);
+  if (isDemoAccount(account.id, c.env.DEMO_ACCOUNT_IDS)) {
+    return c.json({ error: { code: 'DEMO_PROTECTED', message: '演示账户不可新增 DNS 记录' } }, 403);
+  }
   const body = await c.req.json();
   const data = await cfFetch(account, `/zones/${zoneId}/dns_records`, c.env.ENCRYPTION_KEY, {
     method: 'POST', body: JSON.stringify(body),
@@ -70,6 +73,9 @@ app.put('/domains/:domain/records/:id', async (c) => {
   const domain = c.req.param('domain');
   const recordId = c.req.param('id');
   const { account, zoneId } = await findAccountByDomain(c.env.DB, domain, c.env.ENCRYPTION_KEY, c.env.KV);
+  if (isDemoAccount(account.id, c.env.DEMO_ACCOUNT_IDS)) {
+    return c.json({ error: { code: 'DEMO_PROTECTED', message: '演示账户不可修改 DNS 记录' } }, 403);
+  }
   const body = await c.req.json();
   const data = await cfFetch(account, `/zones/${zoneId}/dns_records/${recordId}`, c.env.ENCRYPTION_KEY, {
     method: 'PUT', body: JSON.stringify(body),
@@ -102,6 +108,9 @@ app.patch('/domains/:domain/proxy', async (c) => {
     return c.json({ error: { code: 'VALIDATION_ERROR', message: 'record_id and proxied (boolean) are required' } }, 400);
   }
   const { account, zoneId } = await findAccountByDomain(c.env.DB, c.req.param('domain'), c.env.ENCRYPTION_KEY, c.env.KV);
+  if (isDemoAccount(account.id, c.env.DEMO_ACCOUNT_IDS)) {
+    return c.json({ error: { code: 'DEMO_PROTECTED', message: '演示账户不可修改 DNS 代理状态' } }, 403);
+  }
   await cfFetch(account, `/zones/${zoneId}/dns_records/${body.record_id}`, c.env.ENCRYPTION_KEY, {
     method: 'PATCH', body: JSON.stringify({ proxied: body.proxied }),
   });
@@ -239,7 +248,7 @@ app.patch('/domains/:domain/settings', async (c) => {
         method: 'PATCH', body: JSON.stringify({ value }),
       });
       updated.push(key);
-    } catch (e) {
+    } catch (_e) {
       failed.push(key);
     }
   }

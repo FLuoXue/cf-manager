@@ -1,6 +1,6 @@
 import { Account } from '../../models/account';
 import { getDeployHeaders } from './headers';
-import { computeStaticAssetHash, getContentType, extractZipFiles } from '../staticAssets';
+import { computeStaticAssetHash, getContentType } from '../staticAssets';
 import { appLogger } from '../logger';
 import { proxyFetch } from '../proxyService';
 
@@ -188,7 +188,6 @@ export async function deployPages(
   }
 
   // Step 1: 获取 upload JWT
-  let jwt: string = '';
   const fetchJwt = async () => {
     const resp = await proxyFetch(`${CF_BASE}/accounts/${accountId}/pages/projects/${name}/upload-token`, {
       headers: { ...deployHeaders },
@@ -198,7 +197,7 @@ export async function deployPages(
     if (!json?.result?.jwt) throw new Error(`Upload token response missing jwt: ${JSON.stringify(json)}`);
     return json.result.jwt as string;
   };
-  jwt = await fetchJwt();
+  const jwt = await fetchJwt();
 
   // Step 2: 计算 hash + check-missing
   const manifest: Record<string, string> = {};

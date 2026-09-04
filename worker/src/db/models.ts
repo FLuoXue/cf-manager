@@ -237,11 +237,12 @@ export async function addAuditLog(db: D1Database, data: {
 }
 
 export async function getRecentLogs(db: D1Database, limit = 20): Promise<AuditLogRow[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 200);
   const { results } = await db.prepare(
     `SELECT l.*, a.name as account_name FROM audit_log l
      LEFT JOIN accounts a ON l.account_id = a.id
      ORDER BY l.created_at DESC LIMIT ?`
-  ).bind(limit).all<AuditLogRow>();
+  ).bind(safeLimit).all<AuditLogRow>();
   return results;
 }
 
@@ -271,7 +272,7 @@ export async function queryLogs(db: D1Database, filter: LogFilter = {}): Promise
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limit = filter.limit ?? 100;
+  const limit = Math.min(Math.max(1, filter.limit ?? 100), 500);
 
   const { results } = await db.prepare(
     `SELECT l.*, a.name as account_name FROM audit_log l
@@ -285,7 +286,7 @@ export async function queryLogs(db: D1Database, filter: LogFilter = {}): Promise
 /** 获取所有不重复的操作类型 */
 export async function getDistinctActions(db: D1Database): Promise<string[]> {
   const { results } = await db.prepare(
-    'SELECT DISTINCT action FROM audit_log ORDER BY action'
+    'SELECT DISTINCT action FROM audit_log ORDER BY action LIMIT 100'
   ).all<{ action: string }>();
   return results.map(r => r.action);
 }

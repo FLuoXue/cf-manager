@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { getActiveAccounts, getQuotaByAccount, setQuota, type Account } from '../db/models';
 import { getAiUsageToday, invalidateAiCache } from '../services/quotaTracker';
+import { mapConcurrent } from '../utils/concurrent';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -15,12 +16,11 @@ const app = new Hono<{ Bindings: Env }>();
  */
 app.get('/usage', async (c) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
     const encryptionKey = c.env.ENCRYPTION_KEY;
     const allAccounts = await getActiveAccounts(c.env.DB);
     const accounts = allAccounts.filter(a => a.account_id) as Account[];
 
-    const promises = accounts.map(async (account) => {
+    const result = await mapConcurrent(accounts, 6, async (account) => {
       try {
         const usage = await getAiUsageToday(account as Account, encryptionKey);
 
@@ -61,13 +61,6 @@ app.get('/usage', async (c) => {
         };
       }
     });
-
-    const results = await Promise.allSettled(promises);
-
-    // 提取成功的结果，过滤掉失败的
-    const result = results
-      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value !== null)
-      .map(r => r.value);
 
     // 同步完成后全量刷新内存缓存
     await invalidateAiCache(c.env);

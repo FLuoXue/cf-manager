@@ -13,6 +13,7 @@
 
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { config } from '../config';
 
 const MAX_SCRIPT_SIZE = 5 * 1024 * 1024; // 5 MiB
 
@@ -39,7 +40,7 @@ function isPrivateIp(ip: string): boolean {
 }
 
 export function getAllowlist(): string[] | null {
-  const raw = process.env.WORKER_DEPLOY_URL_ALLOWLIST;
+  const raw = config.workerDeployUrlAllowlist;
   if (!raw) return null;
   const list = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   return list.length ? list : null;

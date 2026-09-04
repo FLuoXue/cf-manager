@@ -3,6 +3,7 @@ import multer from 'multer';
 import { getActiveAccountsByFeature, getAccountById } from '../models/account';
 import { createAuditLog } from '../models/auditLog';
 import { appLogger } from '../services/logger';
+import { mapConcurrent } from '../utils/concurrent';
 import { getAccountOr404, demoDestructiveGuard } from './routeUtils';
 import {
   listWorkers, listPages, deployWorker, deployWorkerFromUrl, deleteWorker, deletePagesProject, getWorkerLogs, WorkerAssetsInput,
@@ -59,23 +60,12 @@ function toAssetsOptions(file?: Express.Multer.File): { assets: WorkerAssetsInpu
 }
 
 // 从 multipart 表单中解析 JSON 字符串字段；空/非法返回空数组
-function parseJsonField(raw: unknown, field: string): any {
+function parseJsonField(raw: unknown, _field: string): any {
   if (raw === undefined || raw === null || raw === '') return [];
   if (typeof raw === 'string') { try { return JSON.parse(raw); } catch { return []; } }
   return raw;
 }
 
-// 受控并发（对齐 worker 端 batch delete 的 CONCURRENCY=3 模式）
-async function mapConcurrent<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let idx = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (idx < items.length) {
-      const current = items[idx++];
-      await fn(current);
-    }
-  });
-  await Promise.all(workers);
-}
 
 // 演示账户：拦截所有销毁/删除类操作（DELETE 等）
 router.use(demoDestructiveGuard);
@@ -472,7 +462,7 @@ router.put('/:accountId/pages/:name/bindings', async (req: Request, res: Respons
 router.get('/summary', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const accounts = getActiveAccountsByFeature('workers');
-    const results = await Promise.all(accounts.map(async (account) => {
+    const results = await mapConcurrent(accounts, 6, async (account) => {
       try {
         const [usageRes, workersRes, pagesRes] = await Promise.allSettled([
           getWorkersUsageToday(account),
@@ -489,7 +479,7 @@ router.get('/summary', async (_req: Request, res: Response, next: NextFunction) 
         appLogger.error(`[Summary] Failed for ${account.name}: ${err}`);
         return { accountId: account.id, accountName: account.name, requests: 0, errors: 0, subrequests: 0, cpuTimeMs: 0, workerCount: 0, pagesCount: 0 };
       }
-    }));
+    });
     res.json(results);
   } catch (err) { next(err); }
 });
@@ -525,7 +515,7 @@ router.get('/usage', async (_req: Request, res: Response, next: NextFunction) =>
 // ============ Batch Deploy ============
 router.post('/batch-deploy', uploadWorkerAssets.fields([{ name: 'script' }, { name: 'assets' }]), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { targets, url: scriptUrl } = req.body;
+    const { url: scriptUrl } = req.body;
     const files = req.files as { script?: Express.Multer.File[]; assets?: Express.Multer.File[] };
     const assetsOpts = toAssetsOptions(files.assets?.[0]);
     const scriptFile = files.script?.[0];

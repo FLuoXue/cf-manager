@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { getAccountById, getActiveAccountsByFeature, addAuditLog } from '../db/models';
 import { cfFetch, cfFetchRaw, cfFetchAll } from '../services/cfApi';
 import { getWorkersUsageToday } from '../services/quotaTracker';
+import { mapConcurrent } from '../utils/concurrent';
 import { demoDestructiveGuard } from '../services/demo';
 import { deployPages } from '../services/deploy/pagesDeploy';
 import { extractZipFiles, validatePagesProjectName } from '../services/pagesDeploy';
@@ -397,7 +398,7 @@ app.put('/:accountId/pages/:name/bindings', async (c) => {
 // ============ Summary (用量 + 已部署数量) ============
 app.get('/summary', async (c) => {
   const accounts = await getActiveAccountsByFeature(c.env.DB, 'workers');
-  const results = await Promise.all(accounts.map(async (account) => {
+  const results = await mapConcurrent(accounts, 6, async (account) => {
     try {
       const [usageP, workersP, pagesP] = await Promise.allSettled([
         getWorkersUsageToday(account, c.env.ENCRYPTION_KEY),
@@ -412,14 +413,14 @@ app.get('/summary', async (c) => {
       console.error(`[Summary] Failed for ${account.name}: ${err}`);
       return { accountId: account.id, accountName: account.name, requests: 0, errors: 0, subrequests: 0, cpuTimeMs: 0, workerCount: 0, pagesCount: 0 };
     }
-  }));
+  });
   return c.json(results);
 });
 
 // ============ Usage ============
 app.get('/usage', async (c) => {
   const accounts = await getActiveAccountsByFeature(c.env.DB, 'workers');
-  const results = await Promise.all(accounts.map(async (account) => {
+  const results = await mapConcurrent(accounts, 6, async (account) => {
     try {
       const usage = await getWorkersUsageToday(account, c.env.ENCRYPTION_KEY);
       return { accountId: account.id, accountName: account.name, ...usage };
@@ -427,7 +428,7 @@ app.get('/usage', async (c) => {
       console.error(`[Usage] Failed for ${account.name}: ${err}`);
       return { accountId: account.id, accountName: account.name, requests: 0, errors: 0, subrequests: 0, cpuTimeMs: 0 };
     }
-  }));
+  });
   return c.json(results);
 });
 

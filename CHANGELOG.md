@@ -1,13 +1,65 @@
 # Changelog
 
-## [2.0.4] - 2026-08-19
+## [2.1.0] - 2026-09-04
+
+### ✨ 新功能
+
+- **新增 OpenAI 兼容文本嵌入端点 `POST /v1/embeddings`（双端对称）**：backend（Express）与 worker（Hono）的 `openai` 路由新增 `/embeddings`，调用 Cloudflare Workers AI Text Embeddings 模型（`bge-base/small/large-en-v1.5`、`bge-m3`、`qwen3-embedding-0.6b`、`plamo-embedding-1b`、`embeddinggemma-300m` 等）。请求体兼容 OpenAI 格式（`{ model, input, encoding_format }`，`input` 支持 string 或 string[]），经 `/ai/run/{model}` 转发 `{ text: [...] }` 并将响应转换为 OpenAI 的 `object:list + data[].embedding + usage`；支持 `encoding_format: "base64"`（Float32 little-endian）、`X-Account-ID` 指定账户与账户轮换/配额记账/审计日志。新增 `estimateEmbeddingsNeurons` 神经元估算（按 token 计费，沿用 `model-pricing.json` 已有 embedding 模型费率）。
+- **新增 OpenAI 兼容语音转文本端点 `POST /audio/transcriptions`（双端对称）**：让 `whisper` / `whisper-large-v3-turbo` / `whisper-tiny-en` / `deepgram/nova-3` / `deepgram/flux` 等语音识别模型支持 OpenAI 兼容格式调用。请求体统一为 JSON `{ model, audio: <base64>, language?, prompt?, response_format? }`，出参支持 JSON 或 `response_format: "text"` 纯文本；复用账户轮换（`selectBestAccount`）、`X-Account-ID` 指定路由、配额记账（`estimateAsrNeurons` 音频时长折算）、审计日志与 429 故障自动轮换；针对静音/无文本输入做稳健兼容，不再误报 502。
+- **新增 `flux-2-klein` / `flux-2-dev` / `flux-2-klein-4b` 图生图编辑支持（双端对称）**：`/images/generations` 对 Flux 2 族模型适配官方 multipart 协议，透传 `guidance`/`seed`；前端 `AiImageView` 图生图模式按能力启用；客户端 canvas 自动缩放与 JPEG 压缩兜底（≤1024px，≤900KB），防止超出 Cloudflare multipart 1MB 上限。协议要点（经 A/B 矩阵直连 CF 逐项实测确定）：参考图字段必须为 `input_image_0` 且以二进制文件附件提交；请求头不得携带 `Accept: application/json`（否则 CF 返回 500 / code 3043）；backend 用 `Buffer.concat` 组装二进制块、worker 用原生 `FormData` + `Blob`；multipart part 的 `Content-Type` 与扩展名按参考图真实格式声明（内置 magic bytes 检测 JPEG/PNG/WebP/GIF），PNG 谎报 `image/jpeg` 同样触发 3043。
+  - **非 Flux 2 模型图生图显式拒绝**：经 10 个图像模型 × 多种字段格式全量实测，CF REST 通道下仅 Flux 2 族真正支持图生图——`flux-1-schnell` / `leonardo/lucid-origin` / `leonardo/phoenix-1.0` 的 schema 无 `image` 字段；`stable-diffusion-xl-base-1.0` / `bytedance/stable-diffusion-xl-lightning` 的 runtime 返回 `input tensor 'image' is not present`；`dreamshaper-8-lcm` 返回 `unexpected shape for input 'image'`；`runwayml/stable-diffusion-v1-5-inpainting` 字段层通过但 CF triton 上游推理失败。故对非 Flux 2 模型收到参考图时直接返回 400 `img2img_unsupported`，避免发到 CF 后拿到模糊上游错误；前端 `AiImageView` 图生图模式本就以白名单仅对 Flux 2 启用，此为后端兜底。
+  - **上游错误透传**：多账户轮换时收集每个账户的失败详情到 `details` 数组一并透传，仅当全部账户均为 4006 配额耗尽时才返回 `ALL_ACCOUNTS_EXHAUSTED`，否则透传具体上游状态码与原因，便于定位真实故障。
+
+### 🔒 安全与凭证兼容
+
+- **跨部署加密线格式统一与平滑兼容（P0-3）**：统一 Express（backend）与 Workers（worker）加密线格式为标准 `ivHex:encHex`（12-byte IV + GCM tag 内联于密文末尾），实现跨端凭证无缝解密；双端内置对历史 3 段格式（`iv:tag:enc`）的向下兼容解析，存量 API Token 无需迁移直接可用。
+- **SSRF 深度防护与私网请求拦截（SSRF Guard）**：浏览器渲染接口（browserRender）增加双端对称的 SSRF 校验与重定向过滤，严格阻断 RFC1918 私网网段、链路本地地址、云元数据 IP（如 `169.254.169.254`）及内网回环，防止管理服务被利用作为内部探测跳板。
+- **演示模式写操作全量保护**：扩展 `demoDestructiveGuard` / `demo.ts` 守卫，不仅拦截删除操作，同时严格拦截 PUT / POST / PATCH 等任何对演示账户的修改、记录添加与部署指令，彻底杜绝演示账户被篡改。
+
+### 💰 模型定价更新（按官方费率校准）
+
+- **按 Cloudflare Workers AI 官方定价页（2026-08-28）校准新增图/音模型费率**（数值约定：USD×1e6，即 `perImage`=每张图、`perAudioMinute`=每音频分钟、`input/output`=每百万 token）：
+  - 文生图：`flux-2-dev` perImage≈49600、`flux-2-klein-4b` 1384、`flux-2-klein-9b` 15000、`leonardo/lucid-origin` 30624、`leonardo/phoenix-1.0` 25520（官方系 tile×step 计费，按 1024²=4 tile、默认 20 步 折算为固定 `perImage`，实际随尺寸/步数浮动）。
+  - 图像分类：`microsoft/resnet-50` perImage=2.51（官方 $2.51/1M 张，精确）。
+  - 音频：`myshell-ai/melotts`(TTS) perAudioMinute=200；ASR 类 `deepgram/flux` 7700、`deepgram/nova-3` 5200、`openai/whisper` 500、`openai/whisper-large-v3-turbo` 500、`openai/whisper-tiny-en` 500（按每音频分钟计费，直接取官方单价×1e6）。
+  - **修正分类**：`deepgram/flux` 官方目录为 ASR（语音识别），此前误归为 TTS，已改为 `perAudioMinute`。
+  - 兜底保留（官方定价页未收录）：`lykon/dreamshaper-8-lcm`、`runwayml/stable-diffusion-v1-5-inpainting` 维持 perImage=1338。
+- **定价逻辑增强（双端对称）**：`pricing.ts` 的 `estimateTtsNeurons` 新增 `perAudioMinute` 优先分支——音频分钟计费模型按 ~900 字符/分钟 由文本长度折算分钟数估算，避免沿用字符费率导致的偏差；无 `perAudioMinute` 的模型回退 `perKChar`。折算假设与来源记录在 `shared/model-pricing.json` 的 `_pricingAssumptions` 字段。
+- **修正图/音模型计费单位错误（单位换算 bug）**：经与官方定价页及既有文本模型核对，确认 `model-pricing.json` 全部数值的真实单位为 **Neurons**（基准 $0.011 / 1,000 Neurons，即 1 Neuron = $0.000011），而非此前误写的「USD×1e6」。既有文本/嵌入/重排/翻译模型数值已与官方一致（如 `llama-3.2-1b` $0.027/1M→2.457 = ×90.909 = 每 1k tokens 的 Neurons）。但本轮新增的图/音模型初版误用 USD×1e6，整体偏大 ~11×，已按正确单位重算并修正：`flux-2-dev` 49600→4508、`flux-2-klein-4b` 1384→126、`flux-2-klein-9b` 15000→1364、`leonardo/lucid-origin` 30624→2784、`leonardo/phoenix-1.0` 25520→2320、`microsoft/resnet-50` 2.51→0.228（按 $2.51/1M 张图，单张极廉价）；音频 `deepgram/flux` 7700→700、`deepgram/nova-3` 5200→473、`myshell-ai/melotts` 200→18、`openai/whisper` 与 `whisper-large-v3-turbo` 500→45、`whisper-tiny-en` 维持近似 45；同时把此前兜底为 30 的 `deepgram/aura-1`/`aura-2-en`/`aura-2-es` 按官方 $/1k 字符 修正为 1364/2727/2727。换算规则统一写入 `_pricingAssumptions`：`input/output`=每 1k tokens 的 Neurons（×90.909），`perImage`=每张图 Neurons（×90909.09），`perKChar`=每 1k 字符 Neurons（×90.909），`perAudioMinute`=每音频分钟 Neurons（×90909.09）。
+- **补充 GLM 模型官方定价**：`@cf/zai-org/glm-5.3` 与 `@cf/zai-org/glm-5.3-flash` 此前官方定价页未收录、沿用兜底 `30/60`，现已补录官方费率（重新核对 2026-08-28 定价页，二者已上线）：`glm-5.3` = 127.273 / 23.636(缓存) / 400.000（=$1.400/$0.260/$4.400 每 1M tokens），`glm-5.3-flash` = 13.636 / 2.727(缓存) / 45.455（=$0.150/$0.030/$0.500 每 1M tokens）。
+- **补录其余已上架官方价的占位模型**：重新全量核对 `model-pricing.json` 中仍为兜底 `30/60` 的条目，确认下列模型官方定价页（2026-08-28）已收录并补录：`deepseek-v4-flash-0731` = 40.000 / 1.273(缓存) / 120.000（=$0.440/$0.014/$1.320 每 1M tokens）、`deepseek-v4-pro-0813` = 120.000 / 4.000(缓存) / 360.000（=$1.320/$0.044/$3.960）、`qwen3.8-27b` = 40.909 / 290.909（=$0.450/$3.200，无缓存）、`moondream3.1-9B-A2B` = 27.273 / 90.909（=$0.300/$1.000 每 1M tokens，属 Other 表 token 计费）、`pipecat-ai/smart-turn-v2` = `{perAudioMinute: 30.723}`（=$0.00033795 每音频分钟，Audio 表）。剩余占位 `30/60`：`gemma-2b-it-lora`、`gemma-7b-it-lora`、`llava-1.5-7b-hf`、`llama-2-7b-chat-hf-lora`、`mistral-7b-instruct-v0.2-lora` 及 `default` —— 已核对官方模型目录页（2026-08-12），这 5 个 lora/旧版变体**仍在在售目录中**（均带 Beta 标签），故予以保留而非清理；但其不在任何定价表内（Beta 模型通常免费或暂未公布费率），无权威费率可填，维持兜底 `30/60`（如需可按相近在售模型近似，待确认）。
 
 ### 🐛 Bug 修复
 
-- **修复 Worker 端 DNS 演示账户保护缺失**：Worker 版 DNS 路由此前仅在创建 Zone（`POST /domains`）与批量删除 Zone 处做了演示账户保护，而 `DELETE /dns/records/:id`（删除记录）与 `DELETE /dns/rules/:phase/:ruleId`（删除 WAF 规则）缺少 `isDemoAccount` 校验，导致演示账户下的 DNS 记录与 WAF 规则可被删除，与 Docker 版（backend）行为不对称。现已补齐两处演示账户校验，返回 `403 DEMO_PROTECTED`，与 backend 对齐。
-- **修复 DNS 添加框打开即报 `SyntaxError: Invalid linked format`**：I18n 消息编译器将占位文案中的裸 `@`（如 `例: www 或 @ 或 *`）误判为 linked-message 别名起始符，打包构建产物加载英文 locale 时触发解析失败；`accounts.importInstructions` 中的 `lauren.bailey2701@xx` 同理会被解析为引用不存在的 key。已将 `zh-CN`/`en` 两处裸 `@` 改为 I18n 字面量语法 `{'@'}`，打开 DNS 添加框不再报错（#47）。
+- **修正文生图模型 img2img 入参字段错误（双端对称）**：核对 Cloudflare 官方 input schema 后修正 `openai.ts` 的 `/images/generations` 路由（backend + worker）：(1) `lykon/dreamshaper-8-lcm` 原落入通用透传分支、把图生图输入以裸 base64 发到 `image`（整数数组字段），类型错误；现归入 SD 族分支改用 `image_b64`（官方 schema 字段名）；(2) SD 族 img2img 原发送 `mask_image`（白遮罩 PNG 字符串），但官方字段为 `mask`（8-bit 整数数组）且纯 img2img 无需遮罩，已删除该错误字段与不再使用的 `WHITE_MASK_PNG` 常量。文生图/图生图请求参数现已与官方 schema 对齐。
+- **修正付费模型（require_workers_paid）误判为免费（双端对称）**：`/api/v1/models` 返回的模型元数据中，`require_workers_paid` 标记值在 Cloudflare `/ai/models/search` 实际为**字符串 `"true"`**（而非此前代码假设的布尔 `true`），导致 `modelRequiresWorkersPaid` 恒返回 false、前端所有付费模型（如 `@cf/zai-org/glm-5.3-flash`、`@cf/zai-org/glm-5.3`、`@cf/moonshotai/kimi-k2.6`/`kimi-k2.7-code`）都不显示「付费」徽标。现已兼容 `"true"`/`1`/`"1"`/`true` 取值。清掉排障用的临时日志 dump。
+- **前端付费徽标渲染稳健化（AiChatView / AiImageView / AiAudioView）**：`n-select` 的 `render-label` 槽不再依赖 Naive UI 透传 option 的自定义字段（`option.requirePaid`），改为从 `modelOptions` 派生 `paidModelValues` 集合、以 `option.value` 查表渲染「付费」徽标，避免个别版本/缓存下自定义字段透传失败导致徽标不显示。
+### 🎤 新增 ASR 语音转文本路由（双端对称）
 
-## [2.0.3] - 2026-08-19
+- **新增 OpenAI 兼容 `POST /audio/transcriptions` 路由（backend + worker）**：让 `whisper` / `whisper-large-v3-turbo` / `whisper-tiny-en` / `deepgram/nova-3` / `deepgram/flux` 等语音识别模型真正可用（此前仅有 TTS 路由、ASR 无调用入口）。请求体统一为 JSON `{ model, audio: <base64>, language?, prompt?, response_format? }`（OpenAI 原版用 multipart `file`，此处与项目其余路由保持一致走 JSON base64）；转发 `POST /ai/run/{model}`（CF 请求体 `{ audio, language?, prompt? }`），出参 `{ text, neurons, task, language }`，`response_format: "text"` 时返回纯文本。复用账户选择（`selectBestAccount` + `X-Account-ID` 指定）、配额记账（`estimateAsrNeurons` 按音频字节数近似时长 × `perAudioMinute` 计费）、审计日志（`ai_asr_transcription`）、神经元耗尽轮换与 429 兜底，与 TTS/翻译路由完全对称。
+
+### 🔧 CI / 质量门禁
+
+- **CI 新增类型检查、单元测试与 Lint 门禁（P1-7）**：`ci.yml` 三个 job 在构建后依次执行 `npm run typecheck` → `npm run lint` → `npm run test`。Worker 端首次获得真正的 TypeScript 类型检查——此前 `build` 走 esbuild 直接剥离类型，类型错误无法被 CI 捕获（Docker↔Worker 迁移类缺陷易静默合入）。backend 与 worker 新增 vitest 单测，覆盖 P0-3 加密统一线格式（明文轮转、旧三段 `iv:tag:enc` 兼容解密、两端互解），锁定跨部署凭证迁移契约。frontend 新增 `typecheck` 脚本（复用 vue-tsc）。Lint 门禁：三端各加 `eslint.config.mjs`（扁平配置），根 `eslint.shared.mjs` 共享规则；规则为 curated error-only——风格类（引号/分号/缩进）全部关闭、仅保留真实 bug 级规则（`no-unused-vars`/`prefer-const`/`no-var`/`no-duplicate-case`/`no-fallthrough`/`eqeqeq`/`no-unreachable` 等）作为 error，`no-explicit-any` 仅 warning 不阻断；清掉存量未用变量/应改 const 的 error（backend 19 + worker 17 + frontend 4 = 40 处），CI 现对 lint/typecheck/test 三者全部门禁。
+- **新增 `vitest` 测试依赖**：backend / worker 的 `package.json` 加入 `vitest` 与 `typecheck` / `test` 脚本；因 CI 使用 `npm ci`，需在 backend / worker 目录执行 `npm install` 刷新对应 `package-lock.json` 后再提交，否则 CI 安装阶段会失败。
+- **路径规范化中间件（P1-4）**：backend 与 worker 新增对称的中间件 `canonicalizeMiddleware`，在认证与路由匹配之前改写请求路径——折叠连续斜杠（`/api//ai`→`/api/ai`）、去除尾部斜杠（根路径 `/` 保留）、对 `/api` 与 `/v1` 前缀小写化（`/API/AI`→`/api/ai`）。消除 Docker(Express) 与 Worker(Hono) 两端对变形路径的路由匹配结果不一致，避免路径绕过或 404/500 差异；非 API 路径（如 `/admin` 静态资源）保持大小写原样，避免破坏资源文件名。两端新增 `normalizePath` 边界单测。
+- **双端数据库结构对齐（P1-15）**：逐表核对 backend `db.ts` 与 worker `schema.sql`+`migrations.sql`，5 张共享表的列集合/类型/默认值/索引一致；把 `enabled_features`/`password`/`available_features`/`proxy_url`/`proxy_enabled` 补进 backend `accounts` 基础 CREATE，使规范建表与 worker `schema.sql` 逐字对齐（ALTER 兜底块保留以兼容旧库）。`scheduled_tasks`/`task_executions` 为 backend 独有（worker 走 Cron Triggers），属设计性差异。
+- **数据库迁移机制版本化（P1-17 / P1-18 / P1-19）**：废弃「backend 陈旧 base CREATE + ALTER 块」「worker `migrations.sql` 逐行跑」的手工三处同步，改为版本化迁移 + `_migrations` 记录表（每条只执行一次、失败即中断）。
+  - **Worker（D1）**：历史演进拆为 `worker/src/db/migrations/NNNN_*.sql`（一条逻辑迁移一个文件），由新增 `worker/scripts/migrate.mjs` 在部署时按版本号有序应用并记录到 D1 的 `_migrations` 表；对现网已含全部列的库，命中「列/表已存在」按幂等跳过并照常记录（兼容旧库），其余错误暴露并中止部署。`schema.sql` 保持为「当前完整 schema」的单一真相源，全新库已由它含全部列，迁移仅补齐旧库——消除 P1-19 的冗余废语句。worker `package.json` 新增 `db:migrate` 脚本。
+  - **Backend（SQLite）**：`db.ts` 内嵌 `MIGRATIONS` 数组（历史演进用 `ADD COLUMN IF NOT EXISTS` 幂等），`initDb` 改为先建表再 `applyMigrations(db)`，迁移写入本地 `_migrations` 表；旧的 PRAGMA 探测 + ALTER 块删除。
+  - **CI 门禁（P1-17 核心）**：新增 `scripts/check-db-schema.mjs` 并在 `ci.yml` 加 `schema-check` job，解析 backend `db.ts` 与 worker `schema.sql` 的**共享表**列集合做比对（两端不一致则 PR 检查变红），并校验 worker 迁移不引入 `schema.sql` 之外的列，从机制上杜绝双端 schema 漂移。
+
+### 🧩 代码结构与性能治理（P2）
+
+- **`workerService.ts` 巨型文件拆分（职责收敛）**：将 backend `workerService.ts` 中约 400 行与 Worker 脚本本身无关的逻辑拆为两个专职服务——`pagesService.ts`（Pages 项目管理：列表/详情/域名/部署记录/绑定/删除等，+221 行）与 `workerConfig.ts`（Worker/Pages 配置读取与差异应用：`getWorkerConfig` / `getPagesConfig` / `applyWorkerConfigDiff`，供重部署预填使用，+178 行）。原文件瘦身约 400 行，路由层按职责分别 import，消除单体服务文件的维护负担。拆分时同步在 `routes/workers.ts` 补齐 `mapConcurrent`（并发映射 helper，本次一并抽取到 `utils/concurrent.ts`）的导入。
+- **抽取并发控制 helper `utils/concurrent.ts`（双端对称，新增文件）**：把账户级并发映射 `mapConcurrent(items, concurrency, fn)` 从服务层抽到 `backend/src/utils/concurrent.ts` 与 `worker/src/utils/concurrent.ts`（各 29 行），供 `quotaTracker` / `workers.ts` / `ai.ts` 等复用，避免各服务重复实现并发逻辑。
+- **配额同步并发限流与防重入（双端对称）**：`syncUsageFromCloudflare()` 原使用无节流的 `Promise.all` 遍历全部账户，账户数多时会瞬时打出大量并发 CF 请求；改为 `mapConcurrent(accounts, 6, ...)` 限制并发度，并新增 `inFlightSyncPromise` 请求去重——同一时刻的多个同步请求合并为同一个 in-flight Promise，避免重复打 CF。
+- **AI 账户缓存快照与淘汰修正（backend `accountRouter`）**：`getAiAccountSnapshot()` 原只要缓存 key 存在就返回，当缓存值为空数组时会形成「永远命中空快照」的死状态；改为 `cached && cached.length > 0` 才算有效。`removeAccountFromAiCache()` 在列表清空后立即 `del` 缓存 key，避免残留空数组导致快照永不刷新。新建/更新账户时同步清理 AI 缓存（`accounts.ts` 调 `clearCache()`）。
+- **前端配额同步交互与内存/查询保护治理**：仪表盘新增「同步额度」入口（`DashboardView` + `quotaStore.fetchQuota(refresh)` 走 `?sync=true` 触发服务端同步），`loading` 与 `syncing` 状态分离，避免手动同步时整页 loading 闪烁；`AiStatsView` 配合调整配额统计展示。同时对 `App.vue` / `AccountsView` / `AiChatView` / `StorageView` / `TunnelsView` 做内存泄漏与查询保护治理——清理未释放的事件监听、定时器与未 abort 的请求，对渲染的用户输入 HTML 统一走 DOMPurify 净化，消除组件卸载后状态更新与 XSS 注入面。
+- **国际化补充**：`en.json` / `zh-CN.json` 各新增 `dashboard.syncQuota` / `dashboard.syncingQuota`（同步额度 / 同步中...）两条文案。
+- **工程规范与仓库卫生**：`.gitignore` 补充构建与归档产物（`dist/`、`*.zip`、`*.tar.gz`、`*.tgz`）与测试覆盖率输出（`coverage/`、`.vitest/`），并移除对 `.claude/` 的忽略；`AGENTS.md` 同步更新功能场景索引表。
+
+## [2.0.4] - 2026-08-19
 
 ### 🐛 Bug 修复
 

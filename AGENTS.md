@@ -166,7 +166,7 @@ chmod +x deploy.sh && ./deploy.sh
 4. **Cloudflare API 调用**：backend 通过 `cloudflare` SDK（`getCfClient()`），worker 通过 `fetch` 封装（`cfFetch()`）
 5. **前端 base 路径**：Worker 版固定为 `/admin/`，Docker 版固定为 `/`（单容器 all-in-one）
 6. **提交前检查**：确保两端（backend + worker）功能同步，`CHANGELOG.md` 已更新版本号
-7. **D1 数据库迁移**：GitHub Actions 部署时自动执行 `schema.sql`（建表）+ `migrations.sql`（列级迁移），新增列只需编辑 `worker/src/db/migrations.sql`，无需修改 `deploy-cf.yml`。Docker 版（SQLite）通过 `initDb()` 在启动时自动迁移
+7. **数据库迁移（版本化 + `_migrations` 记录）**：新增表 → 编辑 `worker/src/db/schema.sql`（当前完整 schema 的单一真相源），**同时** backend `src/db.ts` 的 base CREATE 也要同步加同一张表/列（`ci.yml` 的 `schema-check` 会比对双端共享表列集合，不一致则阻断合并）。新增/改列等演进 → 在 `worker/src/db/migrations/` 新增带版本号的 `.sql`（如 `0009_xxx.sql`），由 `worker/scripts/migrate.mjs` 部署时按序应用并记录到 D1 的 `_migrations` 表（每条仅一次）；backend 侧在 `src/db.ts` 的 `MIGRATIONS` 数组追加 `ADD COLUMN IF NOT EXISTS ...` 幂等语句。
 
 ## 功能场景索引
 
@@ -178,6 +178,7 @@ chmod +x deploy.sh && ./deploy.sh
 |---|---|---|
 | 账户管理 CRUD | `src/routes/accounts.ts` | `src/routes/accounts.ts` |
 | DNS 记录管理 | `src/routes/dns.ts` | `src/routes/dns.ts` |
+| Cloudflare Tunnel 穿透 | `src/routes/tunnels.ts` | `src/routes/tunnels.ts` |
 | Workers/Pages 部署（batch-deploy 统一单/批量 + config 重部署预填） | `src/routes/workers.ts` | `src/routes/workers.ts` |
 | KV/D1/R2 存储 | `src/routes/storage.ts` | `src/routes/storage.ts` |
 | AI 推理（内部） | `src/routes/ai.ts` | `src/routes/ai.ts` |
@@ -208,8 +209,13 @@ chmod +x deploy.sh && ./deploy.sh
 | DNS 服务 | `src/services/dnsService.ts` | `src/routes/dns.ts`（内联） |
 | 存储服务 | `src/services/storageService.ts` | `src/routes/storage.ts`（内联） |
 | Worker 部署服务 | `src/services/workerService.ts` | `src/routes/workers.ts`（内联） |
+| Worker/Pages 配置与重部署 | `src/services/workerConfig.ts` | `src/services/workerConfig.ts` |
+| Pages 管理服务 | `src/services/pagesService.ts` | `src/routes/workers.ts`（内联） |
 | Zone 服务 | `src/services/zoneService.ts` | `src/routes/dns.ts`（内联） |
 | Catalog 部署 | `src/services/catalogDeploy.ts` | `src/services/catalogDeploy.ts` |
+| Tunnel 隧道服务 | `src/services/tunnelService.ts` | `src/services/tunnelService.ts` |
+| 规则集服务 | `src/services/rulesetService.ts` | `src/services/rulesetService.ts` |
+| SSRF 防护 | `src/services/ssrfGuard.ts` | `src/services/ssrfGuard.ts` |
 | Catalog 校验 | `src/services/catalogValidator.ts`（自动生成） | `src/services/catalogValidator.ts`（自动生成） |
 | 日志系统 | `src/services/logger.ts`（winston） | `src/services/logger.ts`（console） |
 | 定时任务调度 | `src/services/taskScheduler.ts` | —（用 `scheduled` handler） |
@@ -221,7 +227,7 @@ chmod +x deploy.sh && ./deploy.sh
 | 任务 | Docker 版 (backend/) | Worker 版 (worker/) |
 |---|---|---|
 | 建表/初始化 | `src/db.ts` | `src/db/schema.sql` |
-| 列级迁移 | `src/db.ts`（`initDb` 内联） | `src/db/migrations.sql` |
+| 列级迁移 | `src/db.ts` 的 `MIGRATIONS` 数组（幂等 `ADD COLUMN IF NOT EXISTS`） | `src/db/migrations/*.sql`（由 `scripts/migrate.mjs` 应用） |
 | 数据模型/查询 | `src/models/account.ts` | `src/db/models.ts`（集中） |
 | 审计日志 | `src/models/auditLog.ts` | `src/db/models.ts` |
 | 配额使用 | `src/models/quotaUsage.ts` | `src/db/models.ts` |
@@ -248,6 +254,7 @@ chmod +x deploy.sh && ./deploy.sh
 | Axios 客户端/拦截器 | `src/api/client.ts` |
 | 账户 API 封装 | `src/api/accounts.ts` |
 | DNS API 封装 | `src/api/dns.ts` |
+| 隧道 API 封装 | `src/api/tunnels.ts` |
 | Workers API 封装 | `src/api/workers.ts` |
 | 存储 API 封装 | `src/api/storage.ts` |
 | 设置 API 封装 | `src/api/settings.ts` |
@@ -259,9 +266,14 @@ chmod +x deploy.sh && ./deploy.sh
 | DNS 状态管理 | `src/stores/dnsStore.ts` |
 | 仪表盘页 | `src/views/DashboardView.vue` |
 | 账户管理页 | `src/views/AccountsView.vue` |
+| 隧道穿透页 | `src/views/TunnelsView.vue` |
 | DNS 管理页 | `src/views/DnsView.vue` |
 | Workers/Pages 页 | `src/views/WorkersView.vue` |
 | 存储管理页 | `src/views/StorageView.vue` |
+| AI 对话页 | `src/views/AiChatView.vue` |
+| AI 图像页 | `src/views/AiImageView.vue` |
+| AI 语音页 | `src/views/AiAudioView.vue` |
+| AI 翻译页 | `src/views/AiTranslateView.vue` |
 | AI 推理页 | `src/views/AiView.vue` |
 | 浏览器渲染页 | `src/views/BrowserRenderView.vue` |
 | 应用商店页 | `src/views/StoreView.vue` |
@@ -285,7 +297,7 @@ chmod +x deploy.sh && ./deploy.sh
 | Docker Compose | `docker-compose.yml` |
 | Docker 部署脚本 | `deploy.sh` |
 | Docker 镜像发布 | `.github/workflows/docker-publish.yml` |
-| D1 数据库迁移脚本 | `worker/src/db/migrations.sql` |
+| D1 数据库迁移脚本 | `worker/src/db/migrations/*.sql` + `worker/scripts/migrate.mjs` |
 | All-in-One Dockerfile | `docker/Dockerfile` |
 | 后端环境变量 | `backend/src/config.ts` |
 | Worker 环境变量/Binding | `worker/src/types.ts` + `worker/wrangler.toml` |

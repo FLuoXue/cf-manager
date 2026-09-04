@@ -92,6 +92,8 @@
   "dashboard": {
     "title": "Dashboard",
     "todayQuota": "Today's Quota",
+    "syncQuota": "Sync Quota",
+    "syncingQuota": "Syncing...",
     "searchAccounts": "Search accounts...",
     "accounts": "accounts",
     "sortNameAsc": "Name A-Z",
@@ -553,6 +555,7 @@
     "steps": "Steps",
     "guidance": "Guidance",
     "strength": "Strength",
+    "seed": "Seed",
     "negativePrompt": "Negative Prompt",
     "negativePromptPlaceholder": "What you don't want in the image..."
   },

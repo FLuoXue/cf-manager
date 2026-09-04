@@ -20,16 +20,21 @@ export function initDb(): void {
   const db = getDb();
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      name        TEXT NOT NULL,
-      auth_type   TEXT NOT NULL CHECK(auth_type IN ('token', 'global_key')),
-      api_token   TEXT,
-      api_key     TEXT,
-      email       TEXT,
-      account_id  TEXT,
-      is_active   INTEGER DEFAULT 1,
-      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      name            TEXT NOT NULL,
+      auth_type       TEXT NOT NULL CHECK(auth_type IN ('token', 'global_key')),
+      api_token       TEXT,
+      api_key         TEXT,
+      email           TEXT,
+      account_id      TEXT,
+      is_active       INTEGER DEFAULT 1,
+      enabled_features TEXT DEFAULT 'ai,workers,browser_render,dns,storage',
+      password        TEXT,
+      available_features TEXT DEFAULT '',
+      proxy_url       TEXT DEFAULT '',
+      proxy_enabled   INTEGER DEFAULT 0,
+      created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS quota_usage (
@@ -52,6 +57,9 @@ export function initDb(): void {
       status      TEXT NOT NULL CHECK(status IN ('success', 'error')),
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action_created ON audit_log(action, created_at);
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,30 +99,41 @@ export function initDb(): void {
     );
   `);
 
-  const cols = db.prepare("PRAGMA table_info('accounts')").all() as { name: string }[];
-  if (!cols.find(c => c.name === 'enabled_features')) {
-    db.exec("ALTER TABLE accounts ADD COLUMN enabled_features TEXT DEFAULT 'ai,workers,browser_render,dns,storage'");
-  }
-  if (!cols.find(c => c.name === 'password')) {
-    db.exec("ALTER TABLE accounts ADD COLUMN password TEXT");
-  }
-  if (!cols.find(c => c.name === 'available_features')) {
-    db.exec("ALTER TABLE accounts ADD COLUMN available_features TEXT DEFAULT ''");
-  }
-  if (!cols.find(c => c.name === 'proxy_url')) {
-    db.exec("ALTER TABLE accounts ADD COLUMN proxy_url TEXT DEFAULT ''");
-  }
-  if (!cols.find(c => c.name === 'proxy_enabled')) {
-    db.exec("ALTER TABLE accounts ADD COLUMN proxy_enabled INTEGER DEFAULT 0");
-  }
+  applyMigrations(db);
+}
 
-  // Migrate quota_usage: add exhausted column if not exists
-  const quotaCols = db.prepare("PRAGMA table_info('quota_usage')").all() as { name: string }[];
-  if (!quotaCols.find(c => c.name === 'exhausted')) {
-    db.exec("ALTER TABLE quota_usage ADD COLUMN exhausted INTEGER DEFAULT 0");
-  }
-  if (!quotaCols.find(c => c.name === 'optimistic')) {
-    db.exec("ALTER TABLE quota_usage ADD COLUMN optimistic INTEGER DEFAULT 0");
+// 版本化迁移（P1-17 / P1-18）：每条仅执行一次，记录于 _migrations 表。
+// 新增列通过 PRAGMA table_info 判断列是否存在后再执行普通 ADD COLUMN，
+// 跨所有 SQLite 版本保持幂等、可重复部署（当前 better-sqlite3 构建解析 ADD COLUMN IF NOT EXISTS 会报语法错误）；
+// 非加法迁移（改名/改类型/删列/NOT NULL 无默认/数据回填）请新增带版本号的条目并写一次性脚本。
+type Migration = { version: string; table: string; column: string; sql: string };
+const MIGRATIONS: Migration[] = [
+  { version: '0001_accounts_enabled_features', table: 'accounts', column: 'enabled_features', sql: "ALTER TABLE accounts ADD COLUMN enabled_features TEXT DEFAULT 'ai,workers,browser_render,dns,storage';" },
+  { version: '0002_accounts_password', table: 'accounts', column: 'password', sql: "ALTER TABLE accounts ADD COLUMN password TEXT;" },
+  { version: '0003_accounts_available_features', table: 'accounts', column: 'available_features', sql: "ALTER TABLE accounts ADD COLUMN available_features TEXT DEFAULT '';" },
+  { version: '0004_accounts_proxy_url', table: 'accounts', column: 'proxy_url', sql: "ALTER TABLE accounts ADD COLUMN proxy_url TEXT DEFAULT '';" },
+  { version: '0005_accounts_proxy_enabled', table: 'accounts', column: 'proxy_enabled', sql: "ALTER TABLE accounts ADD COLUMN proxy_enabled INTEGER DEFAULT 0;" },
+  { version: '0006_quota_optimistic', table: 'quota_usage', column: 'optimistic', sql: "ALTER TABLE quota_usage ADD COLUMN optimistic INTEGER DEFAULT 0;" },
+  { version: '0007_quota_exhausted', table: 'quota_usage', column: 'exhausted', sql: "ALTER TABLE quota_usage ADD COLUMN exhausted INTEGER DEFAULT 0;" },
+];
+
+function columnExists(db: Database.Database, table: string, column: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return cols.some((c) => c.name === column);
+}
+
+function applyMigrations(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS _migrations (version TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  const applied = new Set(
+    (db.prepare('SELECT version FROM _migrations').all() as { version: string }[]).map((r) => r.version),
+  );
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.version)) continue;
+    // 列已存在（旧库/手动加过）则跳过执行，但照常记录为已应用，保证幂等
+    if (!columnExists(db, m.table, m.column)) {
+      db.exec(m.sql);
+    }
+    db.prepare('INSERT OR IGNORE INTO _migrations (version) VALUES (?)').run(m.version);
   }
 }
 

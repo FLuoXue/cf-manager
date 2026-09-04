@@ -309,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, h, computed, onMounted } from 'vue';
+import { ref, h, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { NButton, NSpace, NProgress, NTag, NDropdown, useMessage } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
@@ -439,6 +439,10 @@ function handleSearchInput(val: string) {
     accountStore.setSearch(val);
   }, 400);
 }
+
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer);
+});
 
 const featureOptions = computed(() => [
   { label: t('accounts.workersAi'), value: 'ai' },

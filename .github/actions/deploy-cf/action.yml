@@ -3,7 +3,9 @@ description: CF Manager 部署到 Cloudflare Pages 的公共逻辑（D1/KV/构�
 
 # Composite Action —— 由 deploy-cf.yml / deploy-cf-secret.yml 调用
 # 调用方负责设置 env: CLOUDFLARE_GLOBAL_KEY, CLOUDFLARE_EMAIL, ENCRYPTION_KEY, API_SECRET
-# 所有部署逻辑集中在此文件，新增表/列迁移只需编辑 schema.sql / migrations.sql
+# 所有部署逻辑集中在此文件。新增表：编辑 worker/src/db/schema.sql（当前完整 schema 的单一真相源）；
+# 新增/改列等演进：在 worker/src/db/migrations/ 新增带版本号的 .sql，由 migrate.mjs 记录到
+# D1 的 _migrations 表、仅执行一次（解决逐行 migrations.sql 的手工同步与冗余问题）。
 
 inputs:
   project_name:
@@ -135,26 +137,19 @@ runs:
 
         echo "database_id=$DB_ID" >> $GITHUB_OUTPUT
 
-    - name: Run D1 migrations (auto-detect & fix missing tables/columns)
+    - name: Ensure schema & run D1 migrations (versioned)
       shell: bash
       run: |
         DB_NAME="${{ inputs.d1_database_name }}"
-
-        echo "=== Step 1: Ensure all tables exist (CREATE TABLE IF NOT EXISTS) ==="
-        # schema.sql 全部使用 CREATE TABLE IF NOT EXISTS，对已有表安全无副作用
-        # 这会自动补齐旧版部署中缺失的表（如 catalog_sources、app_settings 等）
-        wrangler d1 execute "$DB_NAME" --file=worker/src/db/schema.sql --remote
-
-        echo "=== Step 2: Column-level migrations (add missing columns, skip if exists) ==="
-        # 迁移语句统一维护在 migrations.sql 中，新增列时只需编辑该文件，无需修改本工作流
-        # D1 不支持 IF NOT EXISTS 语法，已存在的列会报错，用 || true 静默跳过
-        while IFS= read -r line; do
-          line=$(echo "$line" | sed 's/--.*$//' | xargs)
-          [ -z "$line" ] && continue
-          wrangler d1 execute "$DB_NAME" --command="$line" --remote 2>/dev/null || true
-        done < worker/src/db/migrations.sql
-
-        echo "=== Migration complete ==="
+        echo "=== Step 1: 确保全部表存在（schema.sql 的 CREATE TABLE IF NOT EXISTS，对已有表安全，会给旧库补新建表）==="
+        wrangler d1 execute "$DB_NAME" --file=worker/src/db/schema.sql --remote 2>&1 || {
+          echo "::error::schema.sql 执行失败"
+          exit 1
+        }
+        echo "=== Step 2: 版本化迁移（_migrations 记录，每条仅执行一次）==="
+        node worker/scripts/migrate.mjs
+      env:
+        D1_NAME: ${{ inputs.d1_database_name }}
 
     - name: Seed deployment account (full wipe only)
       id: seed

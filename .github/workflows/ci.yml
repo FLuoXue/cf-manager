@@ -1,6 +1,6 @@
 name: CI
 
-# 自动 CI 检查：针对 master 的 PR 自动触发，编译校验三部分代码，
+# 自动 CI 检查：针对 master 的 PR 自动触发，编译/类型检查/单元测试校验三部分代码，
 # 任一失败则该 PR 的状态检查变红，配合分支规则集（protect-master）阻止合并。
 # 三个 job 的 status check context 分别为：build-backend / build-frontend / build-worker
 on:
@@ -18,12 +18,23 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
       - name: Install backend dependencies
         working-directory: backend
-        run: npm install
+        run: npm ci
       - name: Build backend
         working-directory: backend
         run: npm run build
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
+      - name: Lint backend
+        working-directory: backend
+        run: npm run lint
+      - name: Test backend
+        working-directory: backend
+        run: npm run test
 
   build-frontend:
     runs-on: ubuntu-latest
@@ -32,12 +43,20 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install
+        run: npm ci
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
 
   build-worker:
     runs-on: ubuntu-latest
@@ -46,9 +65,30 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
       - name: Install worker dependencies
         working-directory: worker
-        run: npm install
+        run: npm ci
       - name: Build worker (includes frontend + shared sync)
         working-directory: worker
         run: npm run build
+      - name: Typecheck worker
+        working-directory: worker
+        run: npm run typecheck
+      - name: Lint worker
+        working-directory: worker
+        run: npm run lint
+      - name: Test worker
+        working-directory: worker
+        run: npm run test
+
+  schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Verify backend/worker DB schema alignment
+        run: node scripts/check-db-schema.mjs

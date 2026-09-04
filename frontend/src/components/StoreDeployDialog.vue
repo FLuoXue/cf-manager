@@ -5,14 +5,9 @@
         <!-- Account -->
         <n-form-item :label="t('storeDeploy.targetAccount')" required>
           <n-select v-model:value="form.accountIds" :options="accountOptions" :render-label="renderAccountLabel" multiple filterable :placeholder="t('storeDeploy.targetAccountPlaceholder')" @update:value="onAccountChange" />
-          <template v-if="needsR2" #feedback>
+          <template v-if="needsR2 || isMultiAccount" #feedback>
             <n-text type="warning" depth="3" style="font-size: 12px">
-              {{ t('storeDeploy.r2Hint') }}
-            </n-text>
-          </template>
-          <template v-if="isMultiAccount" #feedback>
-            <n-text depth="3" style="font-size: 12px">
-              {{ t('storeDeploy.multiAccountHint') }}
+              {{ needsR2 ? t('storeDeploy.r2Hint') : t('storeDeploy.multiAccountHint') }}
             </n-text>
           </template>
         </n-form-item>

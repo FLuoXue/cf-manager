@@ -1,8 +1,8 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
-import path from 'path';
+import { config } from '../config';
 
-const logDir = process.env.LOG_DIR || path.join(__dirname, '..', '..', 'data', 'logs');
+const logDir = config.logDir;
 
 function createLogger(filename: string): winston.Logger {
   const fileTransport = new DailyRotateFile({

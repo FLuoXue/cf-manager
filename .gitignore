@@ -8,6 +8,7 @@ backups/
 *.log
 
 .env
+.env.*
 !.env.example
 
 .DS_Store
@@ -18,8 +19,21 @@ backups/
 .superpowers
 docs/specs
 docs/superpowers/
+docs/review/
 reg/
+
+# AI session handoff notes (temporary)
+.handoff/
+
+# Local diagnostic / temp scratch files
+.tmp-*
+
+# Build and archive artifacts
 worker/public/
+dist/
+*.zip
+*.tar.gz
+*.tgz
 worker/cf-manager.zip
 
 
@@ -44,7 +58,6 @@ backend/src/version.ts
 .agents/
 .codebuddy/
 .cursor/
-.claude/
 .aider/
 .windsurf/
 .github/copilot/
@@ -55,6 +68,10 @@ samples/
 
 # Ignore TypeScript build cache
 *.tsbuildinfo
+
+# Test & coverage outputs
+coverage/
+.vitest/
 
 # Ignore CSV files with credentials
 *.csv
