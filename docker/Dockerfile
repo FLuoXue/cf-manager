@@ -67,10 +67,12 @@ ENV DB_PATH=/app/data/cf-manager.db
 EXPOSE 3000
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+    CMD wget -qO- http://localhost:3000/api/health || exit 1
 
 # 以非 root 用户运行，降低容器被攻破后的影响面（需确保 /app/data 可写）
-RUN addgroup -S nodejs && adduser -S node -G nodejs && chown -R node:nodejs /app
+# node:24-alpine 已自带 node 用户/组（UID/GID = 1000），无需 adduser/addgroup。
+# /app/data 由上一行的 mkdir 在 root 下创建，chown 后由 node 拥有可写。
+RUN chown -R node:node /app
 USER node
 
 CMD ["node", "dist/index.js"]
