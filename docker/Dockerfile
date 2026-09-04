@@ -8,9 +8,7 @@ FROM node:24-alpine AS frontend-builder
 
 WORKDIR /app
 COPY frontend/package*.json ./
-# 使用 npm install 而非 npm ci：lock 在 macOS 生成、Docker 为 Linux，
-# 平台专属可选原生依赖（如 @emnapi/core）版本不一致会导致 npm ci 严格校验失败。
-RUN --mount=type=cache,target=/root/.npm npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/tsconfig*.json frontend/vite.config.ts frontend/index.html ./
 COPY frontend/public ./public
 COPY frontend/src ./src
@@ -23,7 +21,7 @@ RUN --mount=type=cache,target=/var/cache/apk apk add --no-cache python3 make g++
 
 WORKDIR /app
 COPY backend/package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY backend/tsconfig.json ./
 COPY scripts/gen-version.js ./scripts/gen-version.js
 COPY CHANGELOG.md ./CHANGELOG.md
