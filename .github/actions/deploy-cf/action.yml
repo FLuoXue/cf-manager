@@ -289,6 +289,7 @@ runs:
         key: frontend-node-${{ hashFiles('frontend/package-lock.json') }}
 
     - name: Install worker dependencies
+      if: steps.cache-worker.outputs.cache-hit != 'true'
       working-directory: worker
       shell: bash
       run: npm install
