@@ -20,7 +20,16 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: backend/package-lock.json
+      # 直接缓存 node_modules：better-sqlite3 是原生模块，~/.npm 缓存命中后 npm ci 仍要
+      # 重新解压并下载/编译原生二进制，波动大。命中 node_modules 后直接跳过 npm ci。
+      - name: Cache backend node_modules
+        id: cache-backend
+        uses: actions/cache@v4
+        with:
+          path: backend/node_modules
+          key: backend-node-${{ hashFiles('backend/package-lock.json') }}
       - name: Install backend dependencies
+        if: steps.cache-backend.outputs.cache-hit != 'true'
         working-directory: backend
         run: npm ci
       - name: Build backend
@@ -67,7 +76,14 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: worker/package-lock.json
+      - name: Cache worker node_modules
+        id: cache-worker
+        uses: actions/cache@v4
+        with:
+          path: worker/node_modules
+          key: worker-node-${{ hashFiles('worker/package-lock.json') }}
       - name: Install worker dependencies
+        if: steps.cache-worker.outputs.cache-hit != 'true'
         working-directory: worker
         run: npm ci
       # 生成被 .gitignore 的构建期文件（version.ts / shared 数据 / catalog 校验器），
