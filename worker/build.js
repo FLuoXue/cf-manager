@@ -98,7 +98,11 @@ console.log(`  Set OBFUSCATE_FRONTEND=true to enable frontend obfuscation`);
 console.log(`  Set OBFUSCATE_WORKER=true to enable worker obfuscation (may break on Cloudflare)\n`);
 
 console.log(`[${++step}/${totalSteps}] Installing frontend dependencies...`);
-execSync('npm ci', { cwd: frontendDir, stdio: 'inherit' });
+if (!fs.existsSync(path.join(frontendDir, 'node_modules'))) {
+  execSync('npm ci', { cwd: frontendDir, stdio: 'inherit' });
+} else {
+  console.log('  frontend/node_modules already exists, skipping install');
+}
 
 console.log(`[${++step}/${totalSteps}] Building frontend (base=/admin/)...`);
 execSync('npm run build', {
