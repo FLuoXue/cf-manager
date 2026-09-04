@@ -729,7 +729,7 @@ router.post('/images/generations', async (req: Request, res: Response, next: Nex
     /** 处理 CF 图片生成响应 */
     const handleSuccess = async (account: any, cfResp: any) => {
       const contentType = cfResp.headers.get('content-type') || '';
-      let b64Image = '';
+      let b64Image: string;
 
       appLogger.debug(`[AI Image][${rid}] CF response content-type: ${contentType}, status: ${cfResp.status}`);
 
@@ -984,7 +984,7 @@ router.post('/audio/speech', async (req: Request, res: Response, next: NextFunct
     const handleTtsSuccess = async (account: any, cfResp: any) => {
       const rawContentType = cfResp.headers.get('content-type') || 'audio/mpeg';
       const arrayBuffer = await cfResp.arrayBuffer();
-      let b64Audio = '';
+      let b64Audio: string;
       let audioContentType = rawContentType;
 
       if (rawContentType.includes('json')) {

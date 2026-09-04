@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import { getAccountById, addAuditLog } from '../db/models';
 import { getAuthHeaders } from '../services/cfApi';
 import { trackUsage } from '../services/quotaTracker';
-import { acquireToken, markAccountExhausted, getBrowserRenderStatus, type AcquireResult } from '../services/browserRateLimiter';
+import { acquireToken, markAccountExhausted, getBrowserRenderStatus } from '../services/browserRateLimiter';
 import { logger } from '../services/logger';
 import { assertRenderUrlSafe } from '../services/ssrfGuard';
 
@@ -132,7 +132,6 @@ async function callCfRender(account: any, url: string, mode: RenderMode, env: En
 /** 处理一次渲染请求，包含日限额故障转移。 */
 async function handleRender(url: string, mode: RenderMode, env: Env, specifiedAccountId?: number, browser: BrowserEngine = 'chrome'): Promise<RenderOutcome> {
   let account: any;
-  let tokenResult: AcquireResult | null = null;
 
   // 1. 选账户：指定 accountId 直接用；未指定走令牌桶
   if (specifiedAccountId) {
@@ -145,7 +144,7 @@ async function handleRender(url: string, mode: RenderMode, env: Env, specifiedAc
     }
     account = found;
   } else {
-    tokenResult = await acquireToken(env);
+    const tokenResult = await acquireToken(env);
     if (tokenResult.type === 'all_exhausted') {
       return {
         status: 429,

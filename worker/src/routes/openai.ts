@@ -189,7 +189,7 @@ async function fetchCf(account: any, body: any, env: Env, timeoutMs: number): Pr
     return resp;
   } catch (fetchErr: any) {
     clearTimeout(timeoutId);
-    if (fetchErr.name === 'AbortError') throw new Error(`Request timeout after ${timeoutMs}ms`);
+    if (fetchErr.name === 'AbortError') throw new Error(`Request timeout after ${timeoutMs}ms`, { cause: fetchErr });
     throw fetchErr;
   }
 }
@@ -626,7 +626,7 @@ app.post('/images/generations', async (c) => {
   /** 处理 CF 图片生成成功响应 */
   async function handleSuccess(account: any, cfResp: Response): Promise<Response> {
     const contentType = cfResp.headers.get('content-type') || '';
-    let b64Image = '';
+    let b64Image: string;
 
     logger.debug('openai', `[AI Image][${rid}] CF response content-type: ${contentType}, status: ${cfResp.status}`);
 
@@ -882,7 +882,7 @@ app.post('/audio/speech', async (c) => {
       return btoa(binary);
     };
 
-    let b64Audio = '';
+    let b64Audio: string;
     let audioContentType = rawContentType;
 
     if (rawContentType.includes('json')) {

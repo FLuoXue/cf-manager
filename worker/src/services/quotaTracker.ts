@@ -312,7 +312,7 @@ export async function getAiUsageToday(account: Account, encryptionKey: string): 
     return { totalNeurons: Math.round(totalNeurons), models };
   } catch (e) {
     console.error(`[AI Usage] Failed for ${account.name}: ${e}`);
-    throw new Error(`AI usage failed for ${account.name}: ${e}`);
+    throw new Error(`AI usage failed for ${account.name}: ${e}`, { cause: e });
   }
 }
 

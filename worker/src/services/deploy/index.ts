@@ -135,7 +135,7 @@ async function resolveBinding(
     if (sel.mode === 'existing' && sel.existingId) {
       return { type: 'r2', name: binding.name, cfBinding: { type: 'r2_bucket', name: binding.name, bucket_name: sel.existingId }, created: false, resourceType: 'r2', resourceId: sel.existingId };
     }
-    let buckets: any[] = [];
+    let buckets: any[];
     try {
       const list = await cfFetch<{ result: any }>(account, `/accounts/${account.account_id}/r2/buckets`, encryptionKey);
       buckets = (list.result?.buckets) || [];
