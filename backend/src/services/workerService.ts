@@ -77,7 +77,7 @@ export async function listWorkers(account: Account): Promise<WorkerScript[]> {
 
 const CF_BASE = 'https://api.cloudflare.com/client/v4';
 
-async function getAccountSubdomain(account: Account): Promise<string> {
+export async function getAccountSubdomain(account: Account): Promise<string> {
   const headers = getAuthHeaders(account);
   try {
     const resp = await proxyFetch(`${CF_BASE}/accounts/${account.account_id}/workers/subdomain`, {

@@ -127,7 +127,7 @@
 
 <script setup lang="ts">
 import { ref, h, computed, onMounted } from 'vue';
-import { NButton, NSpace, NTag, useMessage, NPopconfirm } from 'naive-ui';
+import { NButton, NSpace, NTag, useMessage, NPopconfirm, NTooltip, NText } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import { useWorkerStore } from '../stores/workerStore';
@@ -258,6 +258,26 @@ const columns = computed<DataTableColumns<any>>(() => {
   const cols: DataTableColumns<any> = [
     { title: t('workers.table.type'), key: 'type', width: 80, render: (row) => h(NTag, { size: 'small', type: row.type === 'pages' ? 'info' : 'success' }, { default: () => row.type === 'pages' ? 'Pages' : 'Worker' }) },
     { title: t('workers.table.name'), key: 'name', width: 180 },
+    {
+      title: '链接', key: 'workerUrl', width: 220,
+      render: (row) => {
+        const url = row.workerUrl;
+        if (!url) return h(NText, { depth: 3 }, { default: () => '-' });
+        const display = url.replace(/^https?:\/\//, '');
+        return h(NTooltip, null, {
+          trigger: () => h(NButton, {
+            text: true,
+            size: 'small',
+            tag: 'a',
+            href: url,
+            target: '_blank',
+            rel: 'noopener',
+            style: 'font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block;',
+          }, { default: () => display }),
+          default: () => url,
+        });
+      },
+    },
     { title: t('workers.table.account'), key: 'accountName', width: 120, render: (row) => row.accountName || row.cfAccountId },
     { title: t('workers.table.status'), key: 'status', width: 100, render: (row) => {
       // 统一状态文案：Worker 的 deployed/enabled 和 Pages 的 active 都显示为「活跃」

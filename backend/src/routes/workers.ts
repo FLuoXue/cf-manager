@@ -8,6 +8,7 @@ import { getAccountOr404, demoDestructiveGuard } from './routeUtils';
 import {
   listWorkers, listPages, deployWorker, deployWorkerFromUrl, deleteWorker, deletePagesProject, getWorkerLogs, WorkerAssetsInput,
   extractZipFiles, validatePagesProjectName,
+  getAccountSubdomain,
   // Secrets
   listSecrets, updateSecret, deleteSecret,
   // Schedules
@@ -84,17 +85,25 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
     const results = await Promise.all(accounts.map(async (account) => {
       const items: Array<any> = [];
-      const [workers, pages] = await Promise.allSettled([
+      const [workers, pages, subdomainResult] = await Promise.allSettled([
         listWorkers(account),
         listPages(account),
+        getAccountSubdomain(account),
       ]);
+      const accountSubdomain = subdomainResult.status === 'fulfilled' ? subdomainResult.value : '';
       if (workers.status === 'fulfilled') {
-        items.push(...workers.value.map(w => ({ ...w, name: w.id, status: 'deployed', type: 'worker', cfAccountId: account.id, accountName: account.name })));
+        items.push(...workers.value.map(w => ({
+          ...w, name: w.id, status: 'deployed', type: 'worker', cfAccountId: account.id, accountName: account.name,
+          workerUrl: accountSubdomain ? `https://${w.id}.${accountSubdomain}.workers.dev` : '',
+        })));
       } else {
         appLogger.error(`[Workers] Failed to list workers for ${account.name}: ${workers.reason}`);
       }
       if (pages.status === 'fulfilled') {
-        items.push(...pages.value.map(p => ({ ...p, name: p.name ?? p.id, type: 'pages', cfAccountId: account.id, accountName: account.name })));
+        items.push(...pages.value.map(p => ({
+          ...p, name: p.name ?? p.id, type: 'pages', cfAccountId: account.id, accountName: account.name,
+          workerUrl: `https://${p.name ?? p.id}.pages.dev`,
+        })));
       } else {
         appLogger.error(`[Pages] Failed to list pages for ${account.name}: ${pages.reason}`);
       }

@@ -17,6 +17,14 @@ const app = new Hono<{ Bindings: Env }>();
 // 演示账户：拦截所有销毁/删除类操作（DELETE 等）
 app.use('/:accountId/*', demoDestructiveGuard());
 
+/** 获取账户的 workers.dev 子域名 */
+async function getAccountSubdomain(account: any, encryptionKey: string): Promise<string> {
+  try {
+    const data = await cfFetch<{ result: { subdomain: string } }>(account, `/accounts/${account.account_id}/workers/subdomain`, encryptionKey);
+    return data.result?.subdomain || '';
+  } catch { return ''; }
+}
+
 async function requireAccount(c: any) {
   const id = parseInt(c.req.param('accountId'), 10);
   const account = await getAccountById(c.env.DB, id);
@@ -37,15 +45,23 @@ app.get('/', async (c) => {
   }
   const results = await Promise.all(accounts.map(async (account) => {
     const items: any[] = [];
-    const [workersRes, pagesRes] = await Promise.allSettled([
+    const [workersRes, pagesRes, subdomainRes] = await Promise.allSettled([
       cfFetch<{ result: any[] }>(account, `/accounts/${account.account_id}/workers/scripts`, c.env.ENCRYPTION_KEY),
       cfFetch<{ result: any[] }>(account, `/accounts/${account.account_id}/pages/projects`, c.env.ENCRYPTION_KEY),
+      getAccountSubdomain(account, c.env.ENCRYPTION_KEY),
     ]);
+    const accountSubdomain = subdomainRes.status === 'fulfilled' ? subdomainRes.value : '';
     if (workersRes.status === 'fulfilled') {
-      items.push(...(workersRes.value.result || []).map(w => ({ ...w, name: w.id, status: 'deployed', type: 'worker', cfAccountId: account.id, accountName: account.name })));
+      items.push(...(workersRes.value.result || []).map(w => ({
+        ...w, name: w.id, status: 'deployed', type: 'worker', cfAccountId: account.id, accountName: account.name,
+        workerUrl: accountSubdomain ? `https://${w.id}.${accountSubdomain}.workers.dev` : '',
+      })));
     } else { console.error(`[Workers] list failed for ${account.name}: ${workersRes.reason}`); }
     if (pagesRes.status === 'fulfilled') {
-      items.push(...(pagesRes.value.result || []).map(p => ({ ...p, name: p.name ?? p.id, type: 'pages', cfAccountId: account.id, accountName: account.name })));
+      items.push(...(pagesRes.value.result || []).map(p => ({
+        ...p, name: p.name ?? p.id, type: 'pages', cfAccountId: account.id, accountName: account.name,
+        workerUrl: `https://${p.name ?? p.id}.pages.dev`,
+      })));
     } else { console.error(`[Pages] list failed for ${account.name}: ${pagesRes.reason}`); }
     return items;
   }));
