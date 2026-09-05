@@ -234,6 +234,7 @@
       "id": "ID",
       "name": "名称",
       "accountId": "Account ID",
+      "workerPlan": "计划",
       "authType": "认证类型",
       "proxy": "代理",
       "features": "功能",

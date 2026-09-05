@@ -6,6 +6,8 @@ import { listAccountsPaged, AccountListFilter } from '../models/account';
 import { encrypt } from '../services/encryptionService';
 import { decrypt } from '../services/encryptionService';
 import { getCfClient } from '../services/cfFactory';
+import { getAuthHeaders } from '../services/cfFactory';
+import { proxyFetch } from '../services/proxyService';
 import { getQuotaSummary } from '../services/quotaTracker';
 import { clearCache } from '../services/accountRouter';
 import { appLogger } from '../services/logger';
@@ -318,6 +320,7 @@ router.get('/:id/credentials', (req: Request, res: Response, next: NextFunction)
       api_key,
       password,
       account_id: account.account_id,
+      worker_plan: account.worker_plan || '',
       proxy_url: account.proxy_url || '',
       proxy_enabled: account.proxy_enabled || 0,
     });
@@ -360,6 +363,28 @@ router.post('/:id/test', async (req: Request, res: Response, next: NextFunction)
       }
     } catch (e) {
       appLogger.warn(`[Account] Failed to probe features for account ${accountId}: ${e}`);
+    }
+
+    // 获取 Workers 计划类型（从 /subscriptions 接口读取订阅列表）
+    try {
+      const latest = getAccountById(accountId);
+      if (latest?.account_id) {
+        const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(latest) };
+        const resp = await proxyFetch(`https://api.cloudflare.com/client/v4/accounts/${latest.account_id}/subscriptions`, { method: 'GET', headers }, 15000, undefined, latest);
+        if (resp.ok) {
+          const json = await resp.json() as any;
+          const subs: any[] = Array.isArray(json?.result) ? json.result : [];
+          // 从订阅列表中查找 Workers 相关计划
+          const workersSub = subs.find((s: any) => {
+            const planId = (s?.rate_plan?.id || s?.rate_plan?.public_name || '').toLowerCase();
+            return planId.includes('worker');
+          });
+          const planName = workersSub ? (workersSub.rate_plan?.public_name || workersSub.rate_plan?.id || 'workers_paid') : 'Workers Free';
+          updateAccount(accountId, { worker_plan: planName });
+        }
+      }
+    } catch (e) {
+      appLogger.warn(`[Account] Failed to fetch worker_plan for account ${accountId}: ${e}`);
     }
 
     res.json({ success: true, user });
@@ -434,6 +459,27 @@ router.post('/test-batch', async (req: Request, res: Response, next: NextFunctio
           }
         } catch (e) {
           appLogger.warn(`[Account:TestBatch] Failed to probe features for "${account.name}": ${e}`);
+        }
+
+        // 获取 Workers 计划类型（从 /subscriptions 接口）
+        try {
+          const latest = getAccountById(account.id);
+          if (latest?.account_id) {
+            const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(latest) };
+            const resp = await proxyFetch(`https://api.cloudflare.com/client/v4/accounts/${latest.account_id}/subscriptions`, { method: 'GET', headers }, 15000, undefined, latest);
+            if (resp.ok) {
+              const json = await resp.json() as any;
+              const subs: any[] = Array.isArray(json?.result) ? json.result : [];
+              const workersSub = subs.find((s: any) => {
+                const planId = (s?.rate_plan?.id || s?.rate_plan?.public_name || '').toLowerCase();
+                return planId.includes('worker');
+              });
+              const planName = workersSub ? (workersSub.rate_plan?.public_name || workersSub.rate_plan?.id || 'workers_paid') : 'Workers Free';
+              updateAccount(account.id, { worker_plan: planName });
+            }
+          }
+        } catch (e) {
+          appLogger.warn(`[Account:TestBatch] Failed to fetch worker_plan for "${account.name}": ${e}`);
         }
 
         createAuditLog(account.id, 'test_account', account.name, 'batch', 'success');

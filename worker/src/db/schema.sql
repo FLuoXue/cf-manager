@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   available_features TEXT DEFAULT '',
   proxy_url       TEXT DEFAULT '',
   proxy_enabled   INTEGER DEFAULT 0,
+  worker_plan     TEXT DEFAULT '',
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );

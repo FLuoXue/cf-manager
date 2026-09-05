@@ -13,6 +13,7 @@ export interface Account {
   available_features: string;
   proxy_url: string;
   proxy_enabled: number;
+  worker_plan: string;
 }
 
 export type AccountFeature = 'ai' | 'workers' | 'browser_render' | 'dns' | 'storage';

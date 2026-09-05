@@ -188,6 +188,9 @@
             <n-descriptions-item label="Account ID">
               <n-text :style="{ fontFamily: 'monospace' }">{{ credData.account_id || '-' }}</n-text>
             </n-descriptions-item>
+            <n-descriptions-item :label="t('accounts.table.workerPlan')">
+              {{ credData.worker_plan || '—' }}
+            </n-descriptions-item>
             <n-descriptions-item :label="t('accounts.authType')">
               <n-tag size="small" :type="credData.auth_type === 'token' ? 'info' : 'warning'">
                 {{ credData.auth_type === 'token' ? t('accounts.authTypeToken') : t('accounts.authTypeKey') }}
@@ -387,6 +390,7 @@ const credData = ref<{
   name: string;
   auth_type: 'token' | 'global_key';
   account_id: string | null;
+  worker_plan: string;
   email: string | null;
   api_token: string | null;
   api_key: string | null;
@@ -766,6 +770,12 @@ const columns = computed<DataTableColumns<any>>(() => {
   { title: 'ID', key: 'id', width: 60 },
   { title: t('accounts.table.name'), key: 'name', width: 150 },
   { title: 'Account ID', key: 'account_id', width: 180, ellipsis: { tooltip: true }, render: (row) => row.account_id || '-' },
+  { title: t('accounts.table.workerPlan'), key: 'worker_plan', width: 110, render: (row) => {
+    const plan = row.worker_plan || '';
+    if (!plan) return h('span', { style: { color: '#999', fontSize: '12px' } }, '—');
+    const isPaid = /paid|enterprise/i.test(plan);
+    return h(NTag, { size: 'small', type: isPaid ? 'success' : 'default', bordered: false }, { default: () => plan });
+  }},
   { title: t('accounts.table.authType'), key: 'auth_type', width: 120, render: (row) => h(NTag, { size: 'small', type: row.auth_type === 'token' ? 'info' : 'warning' }, { default: () => row.auth_type === 'token' ? 'Token' : 'Key' }) },
   ];
   // Worker 平台不支持代理，隐藏代理列

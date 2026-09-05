@@ -280,6 +280,23 @@ app.post('/:id/test', async (c) => {
     console.warn(`[Account] Failed to probe features for account ${id}: ${e}`);
   }
 
+  // 获取 Workers 计划类型（从 /subscriptions 接口读取订阅列表）
+  try {
+    const latest = await getAccountById(db, id);
+    if (latest?.account_id) {
+      const resp = await cfFetch<{ result: any[] }>(latest, `/accounts/${latest.account_id}/subscriptions`, c.env.ENCRYPTION_KEY);
+      const subs = Array.isArray((resp as any)?.result) ? (resp as any).result : [];
+      const workersSub = subs.find((s: any) => {
+        const planId = (s?.rate_plan?.id || s?.rate_plan?.public_name || '').toLowerCase();
+        return planId.includes('worker');
+      });
+      const planName = workersSub ? (workersSub.rate_plan?.public_name || workersSub.rate_plan?.id || 'workers_paid') : 'Workers Free';
+      await updateAccount(db, id, { worker_plan: planName });
+    }
+  } catch (e) {
+    console.warn(`[Account] Failed to fetch worker_plan for account ${id}: ${e}`);
+  }
+
   return c.json({ user });
 });
 
@@ -329,6 +346,7 @@ app.get('/:id/credentials', async (c) => {
     api_token,
     api_key,
     account_id: account.account_id,
+    worker_plan: account.worker_plan || '',
     proxy_url: account.proxy_url || '',
     proxy_enabled: account.proxy_enabled || 0,
   });
@@ -386,6 +404,23 @@ app.post('/test-batch', async (c) => {
         }
       } catch (e) {
         console.warn(`[Account:TestBatch] Failed to probe features for "${account.name}": ${e}`);
+      }
+
+      // 获取 Workers 计划类型（从 /subscriptions 接口）
+      try {
+        const latest = await getAccountById(db, account.id);
+        if (latest?.account_id) {
+          const resp = await cfFetch<{ result: any[] }>(latest, `/accounts/${latest.account_id}/subscriptions`, encryptionKey);
+          const subs = Array.isArray((resp as any)?.result) ? (resp as any).result : [];
+          const workersSub = subs.find((s: any) => {
+            const planId = (s?.rate_plan?.id || s?.rate_plan?.public_name || '').toLowerCase();
+            return planId.includes('worker');
+          });
+          const planName = workersSub ? (workersSub.rate_plan?.public_name || workersSub.rate_plan?.id || 'workers_paid') : 'Workers Free';
+          await updateAccount(db, account.id, { worker_plan: planName });
+        }
+      } catch (e) {
+        console.warn(`[Account:TestBatch] Failed to fetch worker_plan for "${account.name}": ${e}`);
       }
 
       await addAuditLog(db, { account_id: account.id, action: 'test_account', target: account.name, detail: 'batch', status: 'success' });

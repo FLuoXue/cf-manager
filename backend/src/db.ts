@@ -33,6 +33,7 @@ export function initDb(): void {
       available_features TEXT DEFAULT '',
       proxy_url       TEXT DEFAULT '',
       proxy_enabled   INTEGER DEFAULT 0,
+      worker_plan     TEXT DEFAULT '',
       created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -115,6 +116,7 @@ const MIGRATIONS: Migration[] = [
   { version: '0005_accounts_proxy_enabled', table: 'accounts', column: 'proxy_enabled', sql: "ALTER TABLE accounts ADD COLUMN proxy_enabled INTEGER DEFAULT 0;" },
   { version: '0006_quota_optimistic', table: 'quota_usage', column: 'optimistic', sql: "ALTER TABLE quota_usage ADD COLUMN optimistic INTEGER DEFAULT 0;" },
   { version: '0007_quota_exhausted', table: 'quota_usage', column: 'exhausted', sql: "ALTER TABLE quota_usage ADD COLUMN exhausted INTEGER DEFAULT 0;" },
+  { version: '0009_accounts_worker_plan', table: 'accounts', column: 'worker_plan', sql: "ALTER TABLE accounts ADD COLUMN worker_plan TEXT DEFAULT '';" },
 ];
 
 function columnExists(db: Database.Database, table: string, column: string): boolean {

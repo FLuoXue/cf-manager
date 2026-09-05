@@ -234,6 +234,7 @@
       "id": "ID",
       "name": "Name",
       "accountId": "Account ID",
+      "workerPlan": "Plan",
       "authType": "Auth Type",
       "proxy": "Proxy",
       "features": "Features",

@@ -20,6 +20,7 @@ export interface Account {
   available_features: string;
   proxy_url: string;
   proxy_enabled: number;
+  worker_plan: string;
 }
 
 export interface AccountInput {
@@ -34,6 +35,7 @@ export interface AccountInput {
   available_features?: string;
   proxy_url?: string;
   proxy_enabled?: number;
+  worker_plan?: string;
 }
 
 export function hasFeature(account: Account, feature: AccountFeature): boolean {
@@ -141,6 +143,7 @@ export function updateAccount(id: number, input: Partial<AccountInput>): void {
     available_features: 'available_features',
     proxy_url: 'proxy_url',
     proxy_enabled: 'proxy_enabled',
+    worker_plan: 'worker_plan',
   };
   for (const [key, val] of Object.entries(input)) {
     if (val !== undefined && fieldMap[key]) {

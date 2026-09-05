@@ -102,6 +102,7 @@ export const useAccountStore = defineStore('accounts', () => {
     name: string;
     auth_type: 'token' | 'global_key';
     account_id: string | null;
+    worker_plan: string;
     email: string | null;
     api_token: string | null;
     api_key: string | null;
