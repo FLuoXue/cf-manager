@@ -23,6 +23,7 @@ import openaiRouter from './routes/openai';
 import storeRouter from './routes/store';
 import tunnelsRouter from './routes/tunnels';
 import aiRouter from './routes/ai';
+import pricingRouter from './routes/pricing';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -52,6 +53,9 @@ app.use('/api/v1/*', authMiddleware);
 app.use('/api/v1/*', v1ErrorHandler);
 app.route('/api/v1', openaiRouter);
 app.route('/api/v1/browser', browserRenderRouter);
+
+// Public pricing endpoint (no auth required) — used by new-api ratio sync
+app.route('/api/pricing', pricingRouter);
 
 // Other API routes (with responseWrapper)
 app.use('/api/*', apiLoggerMiddleware);
