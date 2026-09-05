@@ -21,6 +21,7 @@ import externalBrowserRenderRouter from './routes/externalBrowserRender';
 import aiRouter from './routes/ai';
 import storeRouter from './routes/store';
 import tunnelsRouter from './routes/tunnels';
+import pricingRouter from './routes/pricing';
 import { getQuotaSummary, syncUsageFromCloudflare } from './services/quotaTracker';
 import { invalidateAiCache } from './services/accountRouter';
 import { getRecentLogs, queryLogs, getDistinctActions } from './models/auditLog';
@@ -82,6 +83,9 @@ if (fs.existsSync(path.join(__dirname, '..', 'public'))) {
     res.sendFile(path.join(path.join(__dirname, '..', 'public'), 'index.html'));
   });
 }
+
+// Public pricing endpoint (no auth required) — used by new-api ratio sync
+app.use('/api/pricing', pricingRouter);
 
 app.use(authMiddleware);
 
