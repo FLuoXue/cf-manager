@@ -212,6 +212,23 @@ export function modelRequiresWorkersPaid(m: any): boolean {
   return false;
 }
 
+// ============ Paid Model Cache ============
+// 动态缓存需要 Workers Paid 计划的模型列表，由 getAvailableModels 每次刷新。
+// selectBestAccount 可据此过滤账号，避免 Free 账号被选中调用付费模型。
+const paidModelCache = new Set<string>();
+const PAID_MODEL_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟过期
+let paidModelCacheUpdatedAt = 0;
+
+/** 检查模型名是否为付费模型（需 Workers Paid 计划） */
+export function isPaidModel(model: string): boolean {
+  // 缓存过期时视为不确定（返回 false），等下次 getAvailableModels 刷新
+  if (Date.now() - paidModelCacheUpdatedAt > PAID_MODEL_CACHE_TTL_MS) {
+    return false;
+  }
+  return paidModelCache.has(model);
+}
+// ============ End Paid Model Cache ============
+
 export async function getAvailableModels(account: Account, taskFilter?: string): Promise<any[]> {
   if (!account.account_id) {
     throw new Error(`账户 "${account.name}" 缺少 Cloudflare Account ID，请点击"测试连接"以获取`);
@@ -228,6 +245,17 @@ export async function getAvailableModels(account: Account, taskFilter?: string):
   const json = await resp.json() as any;
   let models: any[] = Array.isArray(json?.result) ? json.result : [];
   appLogger.debug(`[AI Models] Total: ${models.length}`);
+
+  // 更新付费模型缓存：每次获取模型列表时同步刷新
+  paidModelCache.clear();
+  for (const m of models) {
+    if (modelRequiresWorkersPaid(m)) {
+      const modelId = (m as any).name || (m as any).id;
+      if (modelId) paidModelCache.add(modelId);
+    }
+  }
+  paidModelCacheUpdatedAt = Date.now();
+  appLogger.debug(`[AI Models] Paid models cached: ${paidModelCache.size}`);
 
   // 如果指定了任务过滤，只返回匹配的模型
   if (taskFilter) {

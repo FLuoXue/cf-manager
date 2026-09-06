@@ -3,7 +3,7 @@ import { stream } from 'hono/streaming';
 import type { Env } from '../types';
 import { setExhausted, incrementQuota, addAuditLog, getActiveAccountsByFeature } from '../db/models';
 import { getAuthHeaders, cfFetchRaw } from '../services/cfApi';
-import { getModelInputSchema, extractTtsAdvancedParams, buildTtsCfBody, modelRequiresWorkersPaid } from '../services/aiService';
+import { getModelInputSchema, extractTtsAdvancedParams, buildTtsCfBody, modelRequiresWorkersPaid, fetchAndCachePaidModels } from '../services/aiService';
 import { selectBestAccount, invalidateAiCache, clearOptimistic } from '../services/quotaTracker';
 import { estimateNeurons, estimateImageNeurons, estimateTtsNeurons, estimateTranslationNeurons, estimateEmbeddingsNeurons, estimateAsrNeurons } from '../services/pricing';
 import { getRequestId } from '../middleware/requestId';
@@ -231,18 +231,38 @@ app.get('/models', async (c) => {
     }));
   }
 
-  const data = models.map((m: any) => {
-    const modelId = m.name || m.id;
-    const meta = ttsModelMeta[modelId] || {};
-    return {
-      id: modelId,
-      object: 'model',
-      created: Math.floor(Date.now() / 1000),
-      owned_by: 'cloudflare',
-      task: m.task?.name || m.task || undefined,
-      require_workers_paid: modelRequiresWorkersPaid(m),
-      speakers: meta.speakers || undefined,
-      default_speaker: meta.default_speaker || undefined,
+  // 检查是否有付费账号，如果没有则过滤掉付费模型
+  // 刷新付费模型缓存（10 分钟内不会重复刷新）
+  if (account) {
+    await fetchAndCachePaidModels(account, c.env.ENCRYPTION_KEY);
+  }
+
+  const allAiAccounts = await getActiveAccountsByFeature(c.env.DB, 'ai');
+  const hasPaidAccount = allAiAccounts.some(a => {
+    const plan = (a.worker_plan || '').toLowerCase();
+    return plan && !plan.includes('free');
+  });
+
+  const data = models
+    .filter((m: any) => {
+      // 如果没有付费账号，过滤掉需要付费计划的模型
+      if (!hasPaidAccount && modelRequiresWorkersPaid(m)) {
+        return false;
+      }
+      return true;
+    })
+    .map((m: any) => {
+      const modelId = m.name || m.id;
+      const meta = ttsModelMeta[modelId] || {};
+      return {
+        id: modelId,
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'cloudflare',
+        task: m.task?.name || m.task || undefined,
+        require_workers_paid: modelRequiresWorkersPaid(m),
+        speakers: meta.speakers || undefined,
+        default_speaker: meta.default_speaker || undefined,
       advanced_params: meta.advanced_params || undefined,
     };
   });

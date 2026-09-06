@@ -1,5 +1,5 @@
 import type { Account } from '../db/models';
-import { cfFetch } from './cfApi';
+import { cfFetch, cfFetchRaw } from './cfApi';
 import { logger } from './logger';
 
 /**
@@ -241,3 +241,44 @@ export function modelRequiresWorkersPaid(m: any): boolean {
   if (isTruthyValue(m?.require_workers_paid)) return true;
   return false;
 }
+
+// ============ Paid Model Cache ============
+// 动态缓存需要 Workers Paid 计划的模型列表，由 fetchAndCachePaidModels 刷新。
+// selectBestAccount 可据此过滤账号，避免 Free 账号被选中调用付费模型。
+const paidModelCache = new Set<string>();
+const PAID_MODEL_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟过期
+let paidModelCacheUpdatedAt = 0;
+
+/** 检查模型名是否为付费模型（需 Workers Paid 计划） */
+export function isPaidModel(model: string): boolean {
+  // 缓存过期时视为不确定（返回 false），等下次刷新
+  if (Date.now() - paidModelCacheUpdatedAt > PAID_MODEL_CACHE_TTL_MS) {
+    return false;
+  }
+  return paidModelCache.has(model);
+}
+
+/**
+ * 从 CF API 获取模型列表并更新付费模型缓存。
+ * 供 openai.ts 的 /models 路由调用。
+ */
+export async function fetchAndCachePaidModels(account: Account, encryptionKey: string): Promise<void> {
+  try {
+    const resp = await cfFetchRaw(account, `/accounts/${account.account_id}/ai/models/search`, encryptionKey);
+    const json = await resp.json() as any;
+    const models: any[] = Array.isArray(json?.result) ? json.result : [];
+
+    paidModelCache.clear();
+    for (const m of models) {
+      if (modelRequiresWorkersPaid(m)) {
+        const modelId = (m as any).name || (m as any).id;
+        if (modelId) paidModelCache.add(modelId);
+      }
+    }
+    paidModelCacheUpdatedAt = Date.now();
+    logger.debug('AI', `Paid models cached: ${paidModelCache.size}`);
+  } catch (err) {
+    logger.warn('AI', `Failed to fetch paid models: ${err}`);
+  }
+}
+// ============ End Paid Model Cache ============

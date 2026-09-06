@@ -4,6 +4,7 @@ import { cfGraphQL } from './cfApi';
 import { logger } from './logger';
 import { mapConcurrent } from '../utils/concurrent';
 import pricingData from '../data/model-pricing.json';
+import { isPaidModel } from './aiService';
 
 export type ResourceType = 'workers_requests' | 'ai_neurons' | 'browser_render_seconds';
 
@@ -230,6 +231,24 @@ export async function selectBestAccount(
     }
 
     if (!snapshot || snapshot.length === 0) return null;
+
+    // 付费模型路由：如果模型需要付费计划，只从付费账号中选择
+    if (model && isPaidModel(model)) {
+      const accounts = await getActiveAccountsByFeature(env.DB, 'ai');
+      const accountMap = new Map(accounts.map(a => [a.id, a]));
+      snapshot = snapshot.filter(r => {
+        const account = accountMap.get(r.id);
+        if (!account) return false;
+        const plan = (account.worker_plan || '').toLowerCase();
+        // worker_plan 为空或含 "free" 的账号不能调用付费模型
+        return plan && !plan.includes('free');
+      });
+      if (snapshot.length === 0) {
+        logger.warn('AI', `Paid model "${model}" requested but no paid accounts available`);
+        return null;
+      }
+      logger.debug('AI', `Paid model "${model}": filtered to ${snapshot.length} paid accounts`);
+    }
 
     // 读取乐观预估量 (KV 或 D1)
     const optimistic = await readOptimistic(env);

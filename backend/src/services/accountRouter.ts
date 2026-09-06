@@ -5,6 +5,7 @@ import { getAccountQuota, ResourceType } from './quotaTracker';
 import { getQuotaTodayByResource } from '../models/quotaUsage';
 import { appLogger } from './logger';
 import pricingData from '../data/model-pricing.json';
+import { isPaidModel } from './aiService';
 
 const ZONES_CACHE_TTL = 300; // 5 minutes
 const QUOTA_CACHE_TTL = 60;  // 1 minute
@@ -121,17 +122,33 @@ export async function selectBestAccount(
 ): Promise<Account | null> {
   if (resource === 'ai_neurons') {
     const list = getAiAccountSnapshot();
-    // 按实际用量 + 乐观预估量排序，避免并发选中同一账户
-    list.sort((a, b) => (a.used + (a._optimistic || 0)) - (b.used + (b._optimistic || 0)));
 
-    const best = list.find(r => !excludeIds?.has(r.account.id));
+    // 付费模型路由：如果模型需要付费计划，只从付费账号中选择
+    let filteredList = list;
+    if (model && isPaidModel(model)) {
+      filteredList = list.filter(r => {
+        const plan = (r.account.worker_plan || '').toLowerCase();
+        // worker_plan 为空或含 "free" 的账号不能调用付费模型
+        return plan && !plan.includes('free');
+      });
+      if (filteredList.length === 0) {
+        appLogger.warn(`[AccountRouter] Paid model "${model}" requested but no paid accounts available`);
+        return null;
+      }
+      appLogger.debug(`[AccountRouter] Paid model "${model}": filtered to ${filteredList.length} paid accounts`);
+    }
+
+    // 按实际用量 + 乐观预估量排序，避免并发选中同一账户
+    filteredList.sort((a, b) => (a.used + (a._optimistic || 0)) - (b.used + (b._optimistic || 0)));
+
+    const best = filteredList.find(r => !excludeIds?.has(r.account.id));
     if (!best) return null;
 
     const supportsCaching = model ? modelSupportsCaching(model) : false;
 
     // 缓存模型：优先复用最近使用的账户（软粘性），提升缓存命中率
     if (supportsCaching && lastUsedAiAccount) {
-      const recent = list.find(r => r.account.id === lastUsedAiAccount!.id && !excludeIds?.has(r.account.id));
+      const recent = filteredList.find(r => r.account.id === lastUsedAiAccount!.id && !excludeIds?.has(r.account.id));
       if (recent && recent !== best) {
         const bestScore = best.used + (best._optimistic || 0);
         const recentScore = (recent.used || 0) + (recent._optimistic || 0);
