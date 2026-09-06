@@ -218,6 +218,22 @@ export async function deployWorker(
     versionId = respJson?.result?.version_id || respJson?.result?.version?.id;
   } catch { /* 响应非 JSON，跳过 */ }
 
+  // 确保账户已注册 workers.dev 子域名（新账号首次部署时自动注册）
+  try {
+    const subResp = await cfFetch<{ result: { subdomain?: string } }>(
+      account, `/accounts/${accountId}/workers/subdomain`, encryptionKey
+    );
+    if (!(subResp as any)?.result?.subdomain) {
+      const prefix = (account.email || account.name || '').split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '');
+      if (prefix) {
+        await cfFetch(account, `/accounts/${accountId}/workers/subdomain`, encryptionKey, {
+          method: 'PUT', body: JSON.stringify({ subdomain: prefix }),
+        });
+        console.log(`[WorkerDeploy] Registered workers.dev subdomain "${prefix}" for account ${account.name}`);
+      }
+    }
+  } catch (_) { /* soft fail */ }
+
   // 启用 workers.dev 子域，使 Worker 立即可访问（与 backend deployWorker 行为一致）
   try {
     await cfFetch(account, `/accounts/${accountId}/workers/scripts/${name}/subdomain`, encryptionKey, {

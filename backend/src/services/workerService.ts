@@ -91,6 +91,33 @@ async function getAccountSubdomain(account: Account): Promise<string> {
   }
 }
 
+/**
+ * 确保账户已注册 workers.dev 子域名。
+ * 若不存在，用邮箱前缀通过 PUT 注册。返回最终子域名。
+ */
+export async function ensureAccountSubdomain(account: Account): Promise<string> {
+  const existing = await getAccountSubdomain(account);
+  if (existing) return existing;
+
+  const prefix = (account.email || account.name || '').split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (!prefix || !account.account_id) return '';
+
+  const headers = getAuthHeaders(account);
+  try {
+    const resp = await proxyFetch(`${CF_BASE}/accounts/${account.account_id}/workers/subdomain`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ subdomain: prefix }),
+    }, 30000, undefined, account);
+    if (resp.ok) {
+      const json = await resp.json() as any;
+      appLogger.info(`[WorkerService] Registered workers.dev subdomain "${json?.result?.subdomain || prefix}" for account ${account.name}`);
+      return json?.result?.subdomain || prefix;
+    }
+  } catch { /* soft fail */ }
+  return '';
+}
+
 // 三阶段上传 Worker 静态资源（与 wrangler 同款）：
 //   1) POST .../assets-upload-session 提交 manifest → 返回 { jwt, buckets }
 //      - buckets 非空：jwt 是 upload token，需按 buckets 分批上传缺失文件

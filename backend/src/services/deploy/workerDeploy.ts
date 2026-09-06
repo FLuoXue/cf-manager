@@ -2,6 +2,7 @@ import { Account } from '../../models/account';
 import { getDeployHeaders } from './headers';
 import { createWorkerUploadForm } from './uploadForm';
 import { deployWorkerAssets } from './assetsUpload';
+import { ensureAccountSubdomain } from '../workerService';
 import type { CfWorkerInit } from './types';
 import { appLogger } from '../logger';
 import { proxyFetch } from '../proxyService';
@@ -246,7 +247,12 @@ export async function deployWorker(
     }
   }
 
-  // 7. 启用 workers.dev 子域
+  // 7. 确保账户已注册 workers.dev 子域名（新账号首次部署时自动注册）
+  try {
+    await ensureAccountSubdomain(account);
+  } catch { /* soft fail */ }
+
+  // 8. 启用 workers.dev 子域
   let subdomain: string | undefined;
   if (options?.enableSubdomain !== false) {
     try {
