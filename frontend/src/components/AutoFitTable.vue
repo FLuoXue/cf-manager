@@ -112,11 +112,12 @@ defineExpose({
   min-height: 0;
 }
 
-/* 磨砂玻璃容器风格（数据密集区使用近实心底色，避免透出底层内容） */
+/* 表格容器风格。
+   数据密集区（表格）是「实色」面板，不跟随页面底色：
+   整表与固定列/表头/hover/分页栏共用同一块实色，且容器与固定列都不用
+   backdrop-filter —— 任何半透明层 + 背景采样都会让固定列与中间列出现色差。 */
 .autofit-table--glass {
-  background: var(--glass-surface-solid, var(--glass-card-bg));
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-surface-opaque, #f8fafc);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
   border-radius: 12px;
@@ -192,31 +193,75 @@ defineExpose({
   background: transparent !important;
 }
 
-/* 分页栏区域内边距与磨砂顶线 */
+/* 关键：Naive 的 <table> 元素自带 background-color: var(--n-merged-td-color)，
+   而 DataTable 的 tdColor 取自 cardColor（暗色玻璃下是白色 0.08）。
+   这层半透明白罩会提亮所有「非固定列」，固定列却是实色盖在上面，
+   导致左右固定列与中间列永远差一截。这里清掉它，让整表落在容器的实色上。 */
+.autofit-table--glass :deep(.n-data-table-table) {
+  background-color: transparent !important;
+}
+
+/* 表头滚动容器同样不允许自带底色 */
+.autofit-table--glass :deep(.n-data-table-base-table-header) {
+  background-color: transparent !important;
+}
+
+/* thead 自带 Naive 默认 thColor（暗色下是白色 0.14 的半透明白罩），
+   会把中间表头提亮，而固定列表头是实色盖在上面，出现色差。清掉。 */
+.autofit-table--glass :deep(.n-data-table-thead) {
+  background-color: transparent !important;
+}
+
+/* 单元格跟随玻璃：Naive 的 th/td 自带近实白底色，会把容器的磨砂整体盖住，
+   表格看起来像「贴在玻璃卡片上的一块白纸」，既与周围面板割裂，
+   也让磨砂档位差异在这里完全体现不出来。
+   行内单元格改为透明（hover 仍交给 Naive 的行高亮），表头只留很轻的白维持层次。
+   固定列另有不透明规则（!important）不受影响。 */
+.autofit-table--glass :deep(.n-data-table-tr:not(:hover) > .n-data-table-td) {
+  background-color: transparent;
+}
+
+.autofit-table--glass :deep(.n-data-table-th) {
+  background-color: var(--glass-th-bg, rgba(255, 255, 255, 0.32));
+}
+
+/* 分页栏区域内边距与顶线：与表格同面的固定操作区 */
 .autofit-table--glass :deep(.n-data-table__pagination) {
   margin: auto 0 0 0 !important;
   flex-shrink: 0 !important;
   padding: 12px 16px !important;
   border-top: 1px solid var(--app-border-light, rgba(226, 232, 240, 0.6));
-  background: var(--glass-surface-solid, var(--app-bg-secondary));
+  background: var(--glass-surface-opaque, #f8fafc);
 }
 
 .autofit-table--glass :deep(.n-data-table-td) {
   border-bottom: 1px solid var(--app-border-light, rgba(226, 232, 240, 0.4)) !important;
 }
 
-/* 固定列（sticky 列）必须使用完全不透明底色：
-   表格 td 默认底色是半透明的，横向滚动时被固定列遮住的单元格会透出来，形成文字重叠 */
+/* 固定列（sticky 列）：与容器同一块实色（不带透明度、不用 backdrop-filter）。
+   实色保证横向滚动时滚过的内容被完全盖住（无文字重影），
+   同色保证固定列与中间列之间没有可感知的色差。 */
 .autofit-table--glass :deep(.n-data-table-td--fixed-left),
 .autofit-table--glass :deep(.n-data-table-td--fixed-right) {
-  background-color: var(--glass-surface-opaque, #ffffff) !important;
+  background-color: var(--glass-surface-opaque, #f8fafc) !important;
 }
 
-/* 行 hover：整行统一使用同一种不透明底色。
-   固定列必须不透明（见上），如果只给固定列设底色、中间列仍走全局的半透明 hover 色，
-   整行就会在固定列与滚动列的交界处出现色差，看起来「只有最左/最右两列有底色」 */
+/* 表头固定列：同一实色基色 + 与普通表头同量的浅色叠加（th-bg），
+   与相邻表头完全同色 */
+.autofit-table--glass :deep(.n-data-table-th--fixed-left),
+.autofit-table--glass :deep(.n-data-table-th--fixed-right) {
+  background-color: var(--glass-surface-opaque, #f8fafc) !important;
+  background-image: linear-gradient(
+    var(--glass-th-bg, rgba(255, 255, 255, 0.32)),
+    var(--glass-th-bg, rgba(255, 255, 255, 0.32))
+  );
+}
+
+/* 行 hover：整行（含固定列）统一使用同一种不透明底色。
+   固定列若不透明、中间列走半透明 hover 色，交界处会出现色差；
+   而固定列若跟着变半透明，又会重新透出横向滚过的内容（文字重影）。 */
 .autofit-table--glass :deep(.n-data-table-tbody .n-data-table-tr:hover > .n-data-table-td) {
-  background-color: var(--glass-surface-opaque-hover, #f4f6fa) !important;
+  background-color: var(--glass-surface-opaque-hover, #e8eef7) !important;
 }
 
 /* 可选固底栏 */
@@ -226,7 +271,7 @@ defineExpose({
   justify-content: space-between;
   padding: 8px 16px;
   border-top: 1px solid var(--app-border-light, rgba(226, 232, 240, 0.6));
-  background: var(--glass-surface-solid, var(--app-bg-secondary));
+  background: var(--glass-surface-opaque, #f8fafc);
   flex-shrink: 0;
   min-height: 38px;
 }

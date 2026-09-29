@@ -1160,9 +1160,24 @@ onMounted(async () => {
   overflow-y: auto;
 }
 
-.storage-list-scroll :deep(.n-spin-container),
-.storage-list-scroll :deep(.n-spin-content) {
+.storage-list-scroll :deep(.n-spin-container) {
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.storage-list-scroll :deep(.n-spin-content) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 空状态：Naive 的 n-empty 自带 48px 下外边距，在 overflow:auto 的列表容器里会被算进
+   scrollHeight，导致内容并未超出也出现滚动条。改用 auto margin 居中，不产生溢出。 */
+.storage-list-scroll :deep(.n-empty),
+.storage-left-card :deep(.n-card__content .n-empty) {
+  margin: auto;
 }
 
 .storage-left-card :deep(.n-card__content),

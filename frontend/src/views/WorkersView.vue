@@ -328,7 +328,7 @@ onMounted(async () => {
 .worker-compact-card:hover { background-color: var(--app-bg-hover); }
 .worker-compact-card__count {
   font-size: 11px;
-  color: var(--app-text-disabled);
+  color: var(--app-text-tertiary);
   font-weight: 500;
   flex-shrink: 0;
   white-space: nowrap;

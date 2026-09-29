@@ -886,7 +886,7 @@ const columns = computed<DataTableColumns<any>>(() => {
   { type: 'selection', width: 40, fixed: 'left' },
   { title: 'ID', key: 'id', width: 60 },
   { title: t('accounts.table.name'), key: 'name', width: 150 },
-  { title: 'Account ID', key: 'account_id', width: 180, ellipsis: { tooltip: true }, render: (row) => row.account_id || '-' },
+  { title: 'Account ID', key: 'account_id', width: 180, ellipsis: { tooltip: true }, render: (row) => h('span', { style: { fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--app-text-secondary)' } }, row.account_id || '-') },
   { title: t('accounts.table.authType'), key: 'auth_type', width: 120, render: (row) => h(NTag, { size: 'small', type: row.auth_type === 'token' ? 'info' : 'warning' }, { default: () => row.auth_type === 'token' ? 'Token' : 'Key' }) },
   { title: t('accounts.workerPlan'), key: 'worker_plan', width: 90, render: (row) => {
     // 未标注（空）与 'free' 都按免费处理；付费模型只会路由到「付费/企业」账号
@@ -898,7 +898,7 @@ const columns = computed<DataTableColumns<any>>(() => {
   // Worker 平台不支持代理，隐藏代理列
   if (!isWorkerPlatform.value) {
     cols.push({ title: t('accounts.table.proxy'), key: 'proxy_url', width: 80, align: 'center', render: (row) => {
-      if (!row.proxy_url) return h('span', { style: { color: '#999', fontSize: '12px' } }, '—');
+      if (!row.proxy_url) return h('span', { style: { color: 'var(--app-text-muted)', fontSize: '12px' } }, '—');
       return row.proxy_enabled
         ? h(NTag, { size: 'small', type: 'success', bordered: false }, { default: () => t('common.enabled') })
         : h(NTag, { size: 'small', type: 'default', bordered: false }, { default: () => t('common.disabled') });
@@ -930,14 +930,14 @@ const columns = computed<DataTableColumns<any>>(() => {
   }},
   { title: t('accounts.table.aiQuota'), key: 'aiQuota', width: 160, render: (row) => {
     const quotaItem = accountStore.quota.find((q: any) => q.accountId === row.id);
-    if (!quotaItem || !quotaItem.resources) return h('span', { style: { color: '#999', fontSize: '12px' } }, '—');
+    if (!quotaItem || !quotaItem.resources) return h('span', { style: { color: 'var(--app-text-muted)', fontSize: '12px' } }, '—');
     const aiResource = quotaItem.resources.find((r: any) => r.resource === 'ai_neurons');
-    if (!aiResource) return h('span', { style: { color: '#999', fontSize: '12px' } }, '—');
+    if (!aiResource) return h('span', { style: { color: 'var(--app-text-muted)', fontSize: '12px' } }, '—');
     const exhausted = aiResource.exhausted;
     const pct = Math.min(100, Math.round(((aiResource.count || 0) / (aiResource.limit || 1)) * 100));
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '100px' } }, [
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
-        h('span', { style: { fontSize: '12px', color: exhausted ? 'var(--theme-error)' : '#666' } }, `${pct}%`),
+        h('span', { style: { fontSize: '12px', color: exhausted ? 'var(--theme-error)' : 'var(--app-text-secondary)' } }, `${pct}%`),
         exhausted
           ? h(NTag, { size: 'small', type: 'error', bordered: false }, { default: () => t('accounts.table.exhausted') })
           : null,

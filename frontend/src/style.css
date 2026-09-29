@@ -29,21 +29,39 @@
   --app-input-bg: rgba(255, 255, 255, 0.6);
   --app-input-border: rgba(203, 213, 225, 0.7);
 
-  /* Glass Tokens - Enhanced Light */
-  --glass-bg: rgba(255, 255, 255, 0.78);
-  --glass-card-bg: rgba(255, 255, 255, 0.75);
-  /* 数据密集区（表格/列表容器）使用的近实心底色：
-     半透明的 --glass-card-bg 会让底层内容（含窗口后面的画面）透出来影响阅读 */
-  --glass-surface-solid: rgba(255, 255, 255, 0.96);
-  /* 表格固定列（sticky 列）必须用完全不透明底色，否则横向滚动时滚过的单元格会透出来重叠 */
-  --glass-surface-opaque: #ffffff;
-  --glass-surface-opaque-hover: #f4f6fa;
-  --glass-border: rgba(255, 255, 255, 0.82);
+  /* Glass Tokens - Enhanced Light
+     留出适度的「透」：磨砂观感来自背景透进来再被 blur 模糊，
+     但也不宜过透——过透会让背景色晕与内容混在一起显脏。
+     数据密集区用更实的 surface-solid 保证阅读。 */
+  --glass-bg: rgba(255, 255, 255, 0.46);
+  --glass-card-bg: rgba(255, 255, 255, 0.4);
+  /* 数据密集区与卡片同级通透（0.5）：表格若比周围面板实，会像"贴在玻璃上的一块白纸"，
+     且背景结构被挡在外面，磨砂档位在表格页完全体现不出来。
+     横向滚动的透底重叠由固定列的不透明底色单独保证（--glass-surface-opaque），不依赖这里。 */
+  --glass-surface-solid: rgba(255, 255, 255, 0.5);
+  /* 数据密集区（表格）面板底色：不跟随页面底色的「实色」面板。
+     整表（容器/单元格/固定列/表头/分页栏）都压在同一块实色上，
+     不做任何半透明叠层——只要有半透明层，固定列与中间列就会出现色差。 */
+  --glass-surface-opaque: #f8fafc;
+  /* 行 hover：整行（含固定列）统一使用同一种「不透明」底色。
+     固定列一旦被换成半透明色，hover 时又会透出滚过的内容；
+     整行同色则交界处无色差。 */
+  --glass-surface-opaque-hover: #e8eef7;
+  --glass-border: rgba(255, 255, 255, 0.9);
+  /* 表格表头底：Naive 默认的近实白会把容器磨砂盖住，这里改为与玻璃同调的浅色 */
+  --glass-th-bg: rgba(255, 255, 255, 0.32);
   --glass-border-subtle: rgba(255, 255, 255, 0.6);
   --glass-shadow: 0 10px 32px 0 rgba(31, 38, 135, 0.1), inset 0 1px 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px 0 rgba(0, 0, 0, 0.03);
   --glass-shadow-hover: 0 16px 40px 0 rgba(31, 38, 135, 0.16), inset 0 1px 2px 0 rgba(255, 255, 255, 1);
   --glass-blur: blur(22px) saturate(180%);
   --glass-blur-heavy: blur(32px) saturate(190%);
+  /* 磨砂雾度（由「磨砂模糊浓度」档位驱动）：在面板上叠一层白色薄雾。
+     背景只有柔和渐变时，blur 数值再变也看不出差异，
+     因此档位同时驱动雾度，保证「微弱 ↔ 超强」的切换有可见效果。
+     JS 负责写入 light/dark 两个基数，--glass-frost-alpha 按主题取用。 */
+  --glass-frost-light: 0.08;
+  --glass-frost-dark: 0.05;
+  --glass-frost-alpha: var(--glass-frost-light);
 
   /* High Contrast Ambient Mesh Lights - Light Mode */
   --ambient-color-1: rgba(99, 102, 241, 0.18);
@@ -60,40 +78,72 @@
 }
 
 html.app-dark {
-  /* Dark Mode Theme Tokens */
-  --app-bg: #0f1118;
-  --app-bg-card: rgba(23, 26, 36, 0.72);
-  --app-bg-hover: rgba(33, 38, 52, 0.7);
-  --app-bg-secondary: rgba(30, 34, 46, 0.65);
-  --app-bg-tertiary: rgba(39, 44, 60, 0.6);
-  --app-border: rgba(255, 255, 255, 0.08);
-  --app-border-light: rgba(255, 255, 255, 0.1);
-  --app-border-input: rgba(255, 255, 255, 0.12);
+  /* Dark Mode Theme Tokens
+     分层原则（参考 feiyu-ui 暗色语言）：面板一律比「页面底」亮一档，
+     靠明度递进拉开层级；不要用「比背景更黑」去压暗，否则整屏糊成一团黑。 */
+  --app-bg: #13161d;
+  --app-bg-card: rgba(255, 255, 255, 0.08);
+  --app-bg-hover: rgba(255, 255, 255, 0.14);
+  --app-bg-secondary: rgba(255, 255, 255, 0.06);
+  --app-bg-tertiary: rgba(255, 255, 255, 0.1);
+  --app-border: rgba(255, 255, 255, 0.1);
+  --app-border-light: rgba(255, 255, 255, 0.12);
+  --app-border-input: rgba(255, 255, 255, 0.14);
   --app-text-primary: #f1f5f9;
   --app-text-secondary: #cbd5e1;
-  --app-text-tertiary: #94a3b8;
-  --app-text-muted: #64748b;
-  --app-text-disabled: #475569;
+  --app-text-tertiary: #9aa5b8;
+  --app-text-muted: #6b7789;
+  --app-text-disabled: #4b5568;
   --app-text-heading: #ffffff;
-  --app-input-bg: rgba(255, 255, 255, 0.05);
-  --app-input-border: rgba(255, 255, 255, 0.12);
+  --app-input-bg: rgba(255, 255, 255, 0.06);
+  --app-input-border: rgba(255, 255, 255, 0.14);
 
-  /* Glass Tokens - Dark */
-  --glass-bg: rgba(17, 20, 29, 0.75);
-  --glass-card-bg: rgba(23, 26, 36, 0.72);
-  --glass-surface-solid: rgba(23, 26, 36, 0.96);
-  --glass-surface-opaque: #171a24;
-  --glass-surface-opaque-hover: #232733;
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-border-subtle: rgba(255, 255, 255, 0.06);
-  --glass-shadow: 0 10px 32px -4px rgba(0, 0, 0, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
-  --glass-shadow-hover: 0 16px 36px -4px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+  /* Glass Tokens - Dark
+     暗色磨砂玻璃用「白色低透明度薄雾」而不是深色半透明：
+     深色玻璃只会让人觉得"透光"，白色薄雾叠加才呈现霜面质感（frosted 的标准做法）。
+     面板亮度靠白色叠加产生，因此同样能维持"面板比页面底亮一档"的层级。 */
+     --glass-bg: rgba(255, 255, 255, 0.06);
+     --glass-card-bg: rgba(255, 255, 255, 0.08);
+     --glass-surface-solid: rgba(255, 255, 255, 0.1);
+     /* 数据密集区（表格）面板底色：不跟随页面底色的实色面板，
+        取色与暗色玻璃面板的合成色一致（theme.ts 的 DARK_REFERENCE_BG #26292f），
+        保证表格与其它卡片同一明度层级。 */
+     --glass-surface-opaque: #26292f;
+     /* hover 行整行同色（含固定列）：比面板亮约一档 */
+     --glass-surface-opaque-hover: #2f343e;
+  --glass-border: rgba(255, 255, 255, 0.16);
+  /* 暗色下表头同样只留极轻的白，避免表头比面板更亮而跳出玻璃 */
+  --glass-th-bg: rgba(255, 255, 255, 0.06);
+  --glass-border-subtle: rgba(255, 255, 255, 0.1);
+  --glass-shadow: 0 10px 32px -6px rgba(0, 0, 0, 0.55), inset 0 1px 0 0 rgba(255, 255, 255, 0.16), inset 0 0 24px -14px rgba(255, 255, 255, 0.16);
+  --glass-shadow-hover: 0 16px 36px -6px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.22), inset 0 0 30px -14px rgba(255, 255, 255, 0.2);
+  /* 暗色下雾度取较低基数，避免面板被白雾冲淡 */
+  --glass-frost-alpha: var(--glass-frost-dark);
 
-  /* Ambient Glows - Dark */
-  --ambient-color-1: rgba(99, 102, 241, 0.12);
-  --ambient-color-2: var(--theme-ambient-accent, rgba(243, 128, 32, 0.14));
-  --ambient-color-3: rgba(16, 185, 129, 0.08);
-  --ambient-color-4: rgba(56, 189, 248, 0.09);
+  /* Ambient Glows - Dark：深底上柔光需略强，否则大面积死黑 */
+  --ambient-color-1: rgba(99, 102, 241, 0.16);
+  --ambient-color-2: var(--theme-ambient-accent, rgba(243, 128, 32, 0.18));
+  --ambient-color-3: rgba(16, 185, 129, 0.12);
+  --ambient-color-4: rgba(56, 189, 248, 0.14);
+}
+
+/* 暗色环境层：orb 更强更「实」，并给背景叠一层噪点。
+   原因：backdrop-filter 只能模糊「背景里已经存在的东西」——
+   背景是纯色时，模糊前后完全一样，磨砂自然看不见；
+   背景有了可辨色块与颗粒，玻璃面板透出的内容被模糊后才有磨砂感。 */
+html.app-dark .orb-1 {
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.22) 0%, transparent 68%);
+  filter: blur(50px);
+}
+
+html.app-dark .orb-2 {
+  background: radial-gradient(circle, var(--theme-ambient-accent, rgba(243, 128, 32, 0.2)) 0%, transparent 68%);
+  filter: blur(50px);
+}
+
+html.app-dark .orb-3 {
+  background: radial-gradient(circle, rgba(244, 63, 94, 0.16) 0%, transparent 68%);
+  filter: blur(58px);
 }
 
 /* Body & Ambient Mesh Lighting */
@@ -132,8 +182,10 @@ body {
   height: 550px;
   top: -120px;
   left: -60px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
-  filter: blur(120px);
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.18) 0%, transparent 70%);
+  /* blur 半径刻意收小：光斑边界要「看得出轮廓」，
+     否则 backdrop-filter 无从体现——玻璃前后都是均匀色雾，看起来就没变化 */
+  filter: blur(50px);
 }
 
 .orb-2 {
@@ -141,8 +193,8 @@ body {
   height: 520px;
   top: 8%;
   right: -50px;
-  background: radial-gradient(circle, var(--theme-ambient-accent, rgba(243, 128, 32, 0.09)) 0%, transparent 70%);
-  filter: blur(120px);
+  background: radial-gradient(circle, var(--theme-ambient-accent, rgba(243, 128, 32, 0.2)) 0%, transparent 70%);
+  filter: blur(50px);
   animation-duration: 28s;
   animation-delay: -5s;
 }
@@ -152,14 +204,38 @@ body {
   height: 480px;
   bottom: -60px;
   left: 25%;
-  background: radial-gradient(circle, rgba(244, 63, 94, 0.06) 0%, transparent 70%);
-  filter: blur(130px);
+  background: radial-gradient(circle, rgba(244, 63, 94, 0.13) 0%, transparent 70%);
+  filter: blur(58px);
   animation-duration: 32s;
   animation-delay: -10s;
 }
 
 .orb-4 {
   display: none;
+}
+
+/* 背景结构层：磨砂要「看得出模糊」，前提是玻璃后面存在可辨识的结构。
+   纯色 + 极柔光晕的背景里，任何 blur 半径的结果都一样（实测两极端档位像素差≈0），
+   于是只能靠「加白」制造差异，观感就变成了"变亮"而不是"更磨砂"。
+   这里铺一层大尺度、柔和的斜向光带：玻璃外能看清走向与边界，
+   透过玻璃则被 backdrop-filter 糊成均匀色 —— 档位越高，结构消失得越彻底。 */
+.ambient-glow-layer::after {
+  content: '';
+  position: absolute;
+  inset: -12%;
+  pointer-events: none;
+  /* 浅色主题的对比空间很小：浅灰底 + 淡彩带穿过近白面板后几乎辨认不出，
+     必须把光带本身做强，玻璃「糊掉结构」的前后差异才看得出来 */
+  background:
+    linear-gradient(112deg, transparent 4%, rgba(99, 102, 241, 0.7) 13%, transparent 24%),
+    linear-gradient(112deg, transparent 32%, rgba(56, 189, 248, 0.66) 42%, transparent 53%),
+    linear-gradient(112deg, transparent 60%, rgba(236, 72, 153, 0.54) 70%, transparent 81%),
+    linear-gradient(112deg, transparent 88%, rgba(16, 185, 129, 0.56) 96%, transparent 100%);
+}
+
+/* 暗色底上彩带本就显眼，整体减弱，避免花色 */
+html.app-dark .ambient-glow-layer::after {
+  opacity: 0.45;
 }
 
 @keyframes orb-float {
@@ -251,6 +327,21 @@ code {
               border-color 0.25s ease !important;
 }
 
+/* 磨砂雾度层：档位越高，面板上的白色薄雾越明显。
+   （背景只有柔和渐变时，单改 blur 数值在视觉上几乎不可分辨，
+     因此「磨砂模糊浓度」同时驱动雾度，保证切换有可见反馈。） */
+.n-card,
+.glass-panel,
+.glass-card,
+.n-layout-sider,
+.n-layout-header,
+.n-layout-footer {
+  background-image: linear-gradient(
+    rgba(255, 255, 255, var(--glass-frost-alpha)),
+    rgba(255, 255, 255, var(--glass-frost-alpha))
+  );
+}
+
 /* 主内容区滚动容器建立确定高度并设为 Flex 垂直伸缩 */
 .n-layout-content > .n-layout-scroll-container {
   overflow: hidden !important;
@@ -316,8 +407,11 @@ code {
   background-color: rgba(10, 13, 20, 0.45) !important;
 }
 
-/* Popover & Dropdown Glass Styling */
-.n-popover,
+/* Popover & Dropdown Glass Styling
+   raw 模式的 popover（n-popover--raw）由业务侧自绘面板（自带圆角/描边/磨砂），
+   wrapper 本身是方角容器：若也套上 border + backdrop-filter，
+   方角的边框和模糊会露在圆角面板的四个角外面，形成四个「缺口角」。 */
+.n-popover:not(.n-popover--raw),
 .n-dropdown-menu {
   backdrop-filter: var(--glass-blur) !important;
   -webkit-backdrop-filter: var(--glass-blur) !important;
