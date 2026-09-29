@@ -17,7 +17,7 @@
       </n-space>
     </n-space>
 
-    <n-space align="center" :size="12" style="margin: 12px 0;">
+    <n-space align="center" :size="12" style="margin-bottom: 12px; flex-shrink: 0;">
       <n-button-group size="small">
         <n-button :type="accountStore.filter === 'all' ? 'primary' : 'default'" @click="handleFilterChange('all')">{{ t('accounts.filterAll') }} ({{ accountStore.counts.all }})</n-button>
         <n-button :type="accountStore.filter === 'active' ? 'primary' : 'default'" @click="handleFilterChange('active')">{{ t('accounts.filterActive') }} ({{ accountStore.counts.active }})</n-button>
@@ -25,7 +25,7 @@
       </n-button-group>
       <n-button
         size="small"
-        type="warning"
+        type="primary"
         :loading="batchTesting"
         :disabled="accountStore.filter === 'unverified' && accountStore.counts.unverified === 0"
         @click="handleTestBatch"
@@ -50,11 +50,11 @@
       </template>
     </n-space>
 
-    <n-data-table
+    <AutoFitTable
+      style="margin-top: 0;"
       :columns="columns"
       :data="accountStore.accounts"
       :loading="accountStore.loading"
-      :bordered="false"
       :scroll-x="1200"
       :pagination="paginationConfig"
       :remote="true"
@@ -353,6 +353,7 @@ import { NButton, NSpace, NProgress, NTag, NDropdown, useMessage } from 'naive-u
 import type { DataTableColumns } from 'naive-ui';
 import type { UploadFileInfo } from 'naive-ui';
 import { useAccountStore } from '../stores/accountStore';
+import AutoFitTable from '../components/AutoFitTable.vue';
 import { accountsApi, type AccountExportParams } from '../api/accounts';
 import { dialog } from '../utils/discreteApi';
 import { settingsApi } from '../api/settings';
@@ -936,7 +937,7 @@ const columns = computed<DataTableColumns<any>>(() => {
     const pct = Math.min(100, Math.round(((aiResource.count || 0) / (aiResource.limit || 1)) * 100));
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '100px' } }, [
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
-        h('span', { style: { fontSize: '12px', color: exhausted ? '#e03050' : '#666' } }, `${pct}%`),
+        h('span', { style: { fontSize: '12px', color: exhausted ? 'var(--theme-error)' : '#666' } }, `${pct}%`),
         exhausted
           ? h(NTag, { size: 'small', type: 'error', bordered: false }, { default: () => t('accounts.table.exhausted') })
           : null,
@@ -965,7 +966,7 @@ const columns = computed<DataTableColumns<any>>(() => {
         ...(isWorkerPlatform.value ? [] : [{ label: t('accounts.table.setProxy'), key: 'proxy', disabled: !!row.is_demo }]),
         ...(isExhausted ? [{ label: t('accounts.table.clearExhausted'), key: 'clearExhausted', disabled: !!row.is_demo }] : []),
         { type: 'divider' as const, key: 'd' },
-        { label: t('accounts.table.deleteAccount'), key: 'delete', disabled: !!row.is_demo, props: { style: 'color: var(--n-error-color)' } },
+        { label: t('accounts.table.deleteAccount'), key: 'delete', disabled: !!row.is_demo, props: { style: 'color: var(--theme-error)' } },
       ];
       return h(NSpace, { size: 4 }, {
         default: () => [
