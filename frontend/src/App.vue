@@ -1,9 +1,18 @@
 <template>
-  <n-config-provider :theme="theme" :locale="naiveLocale" :date-locale="naiveDateLocale">
+  <n-config-provider :theme="theme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <n-dialog-provider>
       <n-message-provider>
         <n-notification-provider>
           <n-loading-bar-provider>
+            <!-- 炫彩环境流体光晕背景层（磨砂折射必备底板） -->
+            <div class="ambient-glow-layer" aria-hidden="true">
+              <div class="ambient-orb orb-1"></div>
+              <div class="ambient-orb orb-2"></div>
+              <div class="ambient-orb orb-3"></div>
+              <div class="ambient-orb orb-4"></div>
+              <div class="ambient-orb orb-5"></div>
+            </div>
+
             <!-- 初始加载 -->
             <div v-if="authChecking" style="display: flex; justify-content: center; align-items: center; height: 100vh">
               <n-spin size="large" />
@@ -24,30 +33,36 @@
             <!-- Desktop Layout -->
             <n-layout v-else-if="!isMobile" has-sider style="height: 100vh">
               <n-layout-sider bordered :width="220" :collapsed-width="64" collapse-mode="width" :collapsed="collapsed">
-                <div style="padding: 16px; text-align: center; font-weight: bold; font-size: 18px">
-                  {{ collapsed ? 'CF' : 'CF Manager' }}
+                <div class="sider-brand">
+                  <span class="brand-logo-badge">CF</span>
+                  <span v-if="!collapsed" class="brand-title">CF Manager</span>
                 </div>
                 <n-menu v-model:value="activeMenuKey" :options="menuOptions" :collapsed="collapsed" @update:value="handleMenuClick" />
               </n-layout-sider>
               <n-layout>
                 <n-layout-header bordered style="height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px">
-                  <n-button quaternary circle @click="collapsed = !collapsed">
+                  <n-button quaternary circle @click="collapsed = !collapsed" :title="collapsed ? 'Expand' : 'Collapse'">
                     <template #icon><n-icon :component="MenuOutline" /></template>
                   </n-button>
-                  <n-space>
+                  <n-space align="center" :size="8">
                     <n-dropdown trigger="click" :options="languageOptions" @select="handleLanguageChange">
-                      <n-button quaternary circle>
+                      <n-button quaternary circle :title="'Language'">
                         <template #icon><n-icon :component="LanguageOutline" /></template>
                       </n-button>
                     </n-dropdown>
+                    <ThemeSettingsPopover />
                     <n-button quaternary circle @click="toggleTheme">
                       <template #icon><n-icon :component="isDark ? SunnyOutline : MoonOutline" /></template>
                     </n-button>
                     <n-button v-if="isAuthenticated" quaternary size="small" @click="handleLogout">{{ t('app.logout') }}</n-button>
                   </n-space>
                 </n-layout-header>
-                <n-layout-content content-style="padding: 24px; height: 100%; box-sizing: border-box;" style="height: calc(100vh - 48px - 32px); overflow-y: auto">
-                  <router-view />
+                <n-layout-content content-style="padding: 20px; height: 100%; box-sizing: border-box; display: flex; flex-direction: column;" style="height: calc(100vh - 48px - 32px); overflow-y: hidden;">
+                  <router-view v-slot="{ Component }">
+                    <transition name="page-fade-slide" mode="out-in">
+                      <component :is="Component" />
+                    </transition>
+                  </router-view>
                 </n-layout-content>
                 <n-layout-footer bordered style="height: 32px; display: flex; align-items: center; justify-content: flex-end; padding: 0 16px; font-size: 12px; color: #999">
                   <span v-if="appVersion">CF Manager v{{ appVersion }}<template v-if="appCommit"> · {{ appCommit }}</template></span>
@@ -58,7 +73,11 @@
             <!-- Mobile Layout -->
             <div v-else class="mobile-layout">
               <div class="mobile-content">
-                <router-view />
+                <router-view v-slot="{ Component }">
+                  <transition name="page-fade-slide" mode="out-in">
+                    <component :is="Component" />
+                  </transition>
+                </router-view>
                 <div class="app-footer" v-if="appVersion">CF Manager v{{ appVersion }}<template v-if="appCommit"> · {{ appCommit }}</template></div>
               </div>
 
@@ -78,6 +97,11 @@
                           <template #icon><n-icon :component="LanguageOutline" :size="16" /></template>
                         </n-button>
                       </n-dropdown>
+                      <ThemeSettingsPopover>
+                        <n-button circle size="small" quaternary>
+                          <template #icon><n-icon :component="ColorPaletteOutline" :size="16" /></template>
+                        </n-button>
+                      </ThemeSettingsPopover>
                       <n-button circle size="small" quaternary @click="toggleTheme">
                         <template #icon><n-icon :component="isDark ? SunnyOutline : MoonOutline" :size="16" /></template>
                       </n-button>
@@ -135,19 +159,19 @@ import {
   SparklesOutline, ImageOutline, SettingsOutline,
   MenuOutline, SunnyOutline, MoonOutline, ServerOutline,
   CloseOutline, GridOutline, LogOutOutline, StorefrontOutline,
-  GitBranchOutline, LanguageOutline,
+  GitBranchOutline, LanguageOutline, ColorPaletteOutline,
 } from '@vicons/ionicons5';
 import apiClient from './api/client';
 import { message as globalMessage, setDiscreteTheme } from './utils/discreteApi';
 import { saveLocale, type Locale } from './i18n';
+import { useAppTheme } from './utils/theme';
+import ThemeSettingsPopover from './components/ThemeSettingsPopover.vue';
 
 const { t, locale } = useI18n();
+const { isDark, themeOverrides, setThemeMode, applyThemeToDocument } = useAppTheme();
 const router = useRouter();
 const route = useRoute();
 const collapsed = ref(false);
-const storedDark = localStorage.getItem('darkMode');
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-const isDark = ref(storedDark !== null ? storedDark === 'true' : prefersDark);
 const activeMenuKey = ref(route.name as string);
 const theme = computed(() => isDark.value ? darkTheme : null);
 
@@ -261,7 +285,8 @@ function onAuthExpired() {
 }
 
 onMounted(async () => {
-  applyTheme();
+  applyThemeToDocument();
+  setDiscreteTheme(isDark.value, themeOverrides.value);
   initFabPos();
   window.addEventListener('resize', onResize);
   window.addEventListener('auth-expired', onAuthExpired);
@@ -334,19 +359,95 @@ function handleMenuClick(key: string) {
 }
 
 function toggleTheme() {
-  isDark.value = !isDark.value;
-  applyTheme();
+  setThemeMode(isDark.value ? 'light' : 'dark');
 }
 
-function applyTheme() {
-  const dark = isDark.value;
-  document.documentElement.classList.toggle('app-dark', dark);
-  localStorage.setItem('darkMode', String(dark));
-  setDiscreteTheme(dark);
-}
+watch([isDark, themeOverrides], () => {
+  setDiscreteTheme(isDark.value, themeOverrides.value);
+});
 </script>
 
 <style scoped>
+/* Login Glass View */
+.login-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  padding: 16px;
+  position: relative;
+  z-index: 10;
+}
+
+.login-card {
+  width: 400px;
+  max-width: 100%;
+  padding: 36px 30px;
+  border-radius: 16px;
+  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.25);
+}
+
+.login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.login-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--theme-primary), var(--theme-primary-hover));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 20px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 16px var(--theme-primary-suppl);
+}
+
+.login-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--app-text-heading);
+}
+
+/* Desktop Sider Brand */
+.sider-brand {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--glass-border-subtle);
+}
+
+.brand-logo-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--theme-primary), var(--theme-primary-hover));
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 2px 8px var(--theme-primary-suppl);
+}
+
+.brand-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--app-text-heading);
+}
+
 /* Mobile Layout */
 .mobile-layout {
   height: 100vh;
@@ -381,8 +482,9 @@ function applyTheme() {
 .page-view {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   height: 100%;
+  min-height: 0;
+  flex: 1 1 0%;
 }
 
 /* FAB Button */
@@ -393,14 +495,14 @@ function applyTheme() {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: #18a058;
+  background: var(--theme-primary, #f38020);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 1100;
-  box-shadow: 0 4px 16px rgba(24, 160, 88, 0.4);
+  box-shadow: 0 4px 16px var(--theme-primary-suppl, rgba(243, 128, 32, 0.4));
   transition: transform 0.2s ease, background 0.2s, box-shadow 0.2s;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -510,20 +612,20 @@ function applyTheme() {
 }
 
 .fab-item:hover {
-  background: rgba(24, 160, 88, 0.06);
+  background: var(--theme-primary-suppl);
 }
 
 .fab-item--active {
-  background: rgba(24, 160, 88, 0.12);
-  color: #18a058;
+  background: var(--theme-primary-suppl);
+  color: var(--theme-primary);
 }
 
 .fab-panel--dark .fab-item:hover {
-  background: rgba(24, 160, 88, 0.12);
+  background: var(--theme-primary-suppl);
 }
 
 .fab-panel--dark .fab-item--active {
-  background: rgba(24, 160, 88, 0.2);
+  background: var(--theme-primary-suppl);
 }
 
 .fab-item-label {

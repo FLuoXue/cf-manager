@@ -84,12 +84,12 @@ function formatValue(r: Resource) {
 }
 
 function dotColor(r: Resource) {
-  if (r.exhausted) return '#e03050';
+  if (r.exhausted) return 'var(--theme-error)';
   const pct = calcPercentage(r);
-  if (pct > 100) return '#c03030';
-  if (pct > 90) return '#d03050';
-  if (pct > 70) return '#f0a020';
-  return '#18a058';
+  if (pct > 100) return 'var(--theme-error)';
+  if (pct > 90) return 'var(--theme-error)';
+  if (pct > 70) return 'var(--theme-warning)';
+  return 'var(--theme-success)';
 }
 
 function progressStatus(r: Resource): 'error' | 'warning' | 'success' {
@@ -116,18 +116,23 @@ const hasResources = computed(() => props.resources && props.resources.length > 
   gap: 6px;
   width: 100%;
   min-width: 0;
-  height: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--app-border);
-  border-radius: 4px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 8px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   background-color: var(--app-bg-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   box-sizing: border-box;
 }
 
 .compact-card:hover {
   background-color: var(--app-bg-hover);
+  border-color: var(--theme-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .compact-card--no-resources {

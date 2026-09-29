@@ -622,7 +622,7 @@ onMounted(() => {
   gap: 10px;
   overflow-y: auto;
   background: var(--app-bg-card);
-  border: 1px solid var(--app-border);
+  border: 1px solid var(--app-border-input);
   border-radius: 8px;
   padding: 12px;
 }
@@ -694,7 +694,7 @@ onMounted(() => {
 .ai-image-main {
   flex: 1;
   overflow-y: auto;
-  border: 1px solid var(--app-border);
+  border: 1px solid var(--app-border-input);
   border-radius: 8px;
   padding: 16px;
   background: var(--app-bg-secondary);
@@ -727,7 +727,7 @@ onMounted(() => {
 
 .ai-image-card {
   position: relative;
-  border: 1px solid var(--app-border);
+  border: 1px solid var(--app-border-input);
   border-radius: 8px;
   overflow: hidden;
   background: var(--app-bg-card);
