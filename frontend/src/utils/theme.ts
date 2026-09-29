@@ -205,8 +205,9 @@ const SEMANTIC_MIN_CONTRAST: Record<SemanticColorName, number> = {
   error: 4.5,
 };
 
-/** 深色主题下的参照背景（与 --app-bg 一致） */
-const DARK_REFERENCE_BG = '#171a24';
+/** 深色主题下的参照背景：取暗色玻璃面板叠在页面底上的合成色（约等于 --app-bg-card），
+    用于校验语义色对比度；面板提亮后需同步，否则对比度会算虚高 */
+const DARK_REFERENCE_BG = '#26292f';
 const LIGHT_REFERENCE_BG = '#ffffff';
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -312,18 +313,39 @@ export const isDark = computed(() => {
   return currentMode.value === 'dark';
 });
 
-const intensityBlurMap: Record<GlassIntensity, { blur: string; heavy: string }> = {
-  low: { blur: 'blur(12px) saturate(150%)', heavy: 'blur(18px) saturate(160%)' },
-  medium: { blur: 'blur(18px) saturate(170%)', heavy: 'blur(26px) saturate(180%)' },
-  strong: { blur: 'blur(26px) saturate(190%)', heavy: 'blur(36px) saturate(200%)' },
-  ultra: { blur: 'blur(36px) saturate(220%)', heavy: 'blur(48px) saturate(230%)' },
+// 暗色下背景缺少高频细节，同样的模糊半径「观感」会明显减弱，
+// 因此暗色单独给一套更强的档位，保证磨砂能被看出来。
+const intensityBlurMap: Record<GlassIntensity, { blur: string; heavy: string; darkBlur: string; darkHeavy: string }> = {
+  low: { blur: 'blur(6px) saturate(140%)', heavy: 'blur(12px) saturate(150%)', darkBlur: 'blur(8px) saturate(150%)', darkHeavy: 'blur(14px) saturate(160%)' },
+  medium: { blur: 'blur(18px) saturate(170%)', heavy: 'blur(26px) saturate(180%)', darkBlur: 'blur(22px) saturate(185%)', darkHeavy: 'blur(30px) saturate(195%)' },
+  strong: { blur: 'blur(32px) saturate(205%)', heavy: 'blur(44px) saturate(215%)', darkBlur: 'blur(38px) saturate(220%)', darkHeavy: 'blur(50px) saturate(230%)' },
+  ultra: { blur: 'blur(52px) saturate(240%)', heavy: 'blur(68px) saturate(250%)', darkBlur: 'blur(60px) saturate(255%)', darkHeavy: 'blur(78px) saturate(265%)' },
+};
+
+// 磨砂雾度：与 blur 同步由档位驱动。
+// 背景只有柔和渐变时，单改 blur 数值在视觉上几乎不可分辨（实测两极端档位像素差≈0），
+// 因此档位同时决定面板叠加的白色薄雾量，切换时「通透 ↔ 朦胧」的变化肉眼可辨。
+// 雾度只作为「散射发白」的物理补充，不再承担主要差异：
+// 磨砂感的主体来源是背景结构被 blur 糊掉的程度（见 style.css 的背景结构层），
+// 白雾给太多会变成"面板只是变亮"，反而不像磨砂。
+// 浅/暗量级不同：暗色底上白雾是直接提亮，取值必须远小于浅色。
+const frostAlphaMap: Record<GlassIntensity, { light: number; dark: number }> = {
+  low: { light: 0, dark: 0 },
+  medium: { light: 0.08, dark: 0.02 },
+  strong: { light: 0.16, dark: 0.05 },
+  ultra: { light: 0.24, dark: 0.08 },
 };
 
 export function applyGlassIntensityToDocument() {
   if (typeof document === 'undefined') return;
   const config = intensityBlurMap[glassIntensity.value] || intensityBlurMap.strong;
-  document.documentElement.style.setProperty('--glass-blur', config.blur);
-  document.documentElement.style.setProperty('--glass-blur-heavy', config.heavy);
+  const dark = isDark.value;
+  document.documentElement.style.setProperty('--glass-blur', dark ? config.darkBlur : config.blur);
+  document.documentElement.style.setProperty('--glass-blur-heavy', dark ? config.darkHeavy : config.heavy);
+
+  const frost = frostAlphaMap[glassIntensity.value] || frostAlphaMap.strong;
+  document.documentElement.style.setProperty('--glass-frost-light', String(frost.light));
+  document.documentElement.style.setProperty('--glass-frost-dark', String(frost.dark));
 }
 
 export function getThemeOverrides(dark: boolean, accentId: string = currentAccent.value, glass: boolean = frostedGlass.value): GlobalThemeOverrides {
@@ -359,31 +381,35 @@ export function getThemeOverrides(dark: boolean, accentId: string = currentAccen
       fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
       ...(glass
         ? {
-            cardColor: dark ? 'rgba(18, 22, 34, 0.68)' : 'rgba(255, 255, 255, 0.72)',
-            modalColor: dark ? 'rgba(18, 22, 34, 0.85)' : 'rgba(255, 255, 255, 0.88)',
-            popoverColor: dark ? 'rgba(18, 22, 34, 0.85)' : 'rgba(255, 255, 255, 0.88)',
-            tableColor: dark ? 'rgba(18, 22, 34, 0.55)' : 'rgba(255, 255, 255, 0.60)',
+            // 玻璃卡片：保留适度通透感（过透会让背景色晕与内容混在一起显脏）
+            cardColor: dark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.4)',
+            // 浮层承载阅读内容，用近实心底色，避免下层卡片文字透出影响可读性
+            modalColor: dark ? 'rgba(33, 38, 50, 0.96)' : 'rgba(255, 255, 255, 0.95)',
+            popoverColor: dark ? 'rgba(33, 38, 50, 0.96)' : 'rgba(255, 255, 255, 0.95)',
+            tableColor: dark ? 'rgba(33, 38, 50, 0.55)' : 'rgba(255, 255, 255, 0.60)',
             bodyColor: 'transparent',
           }
         : {}),
     },
     Layout: {
       color: 'transparent',
+      // 面板色一律亮于页面底 --app-bg (#13161d)：暗色下靠「面板更亮」分层，
+      // 而不是靠「比背景更黑」压暗，否则侧栏/顶栏会形成黑框把整屏拖黑
       headerColor: glass
-        ? dark ? 'rgba(13, 16, 25, 0.68)' : 'rgba(255, 255, 255, 0.72)'
-        : dark ? '#151722' : '#ffffff',
+        ? dark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.74)'
+        : dark ? '#1d222d' : '#ffffff',
       siderColor: glass
-        ? dark ? 'rgba(13, 16, 25, 0.65)' : 'rgba(255, 255, 255, 0.68)'
-        : dark ? '#13151f' : '#fcfcfd',
+        ? dark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(255, 255, 255, 0.68)'
+        : dark ? '#1b202a' : '#fcfcfd',
       footerColor: glass
-        ? dark ? 'rgba(13, 16, 25, 0.45)' : 'rgba(255, 255, 255, 0.48)'
-        : dark ? '#11131a' : '#f8f9fa',
+        ? dark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.55)'
+        : dark ? '#181c25' : '#f8f9fa',
     },
     Card: {
       borderRadius: '14px',
       color: glass
-        ? dark ? 'rgba(18, 22, 34, 0.68)' : 'rgba(255, 255, 255, 0.72)'
-        : dark ? '#1a1d28' : '#ffffff',
+        ? dark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.4)'
+        : dark ? '#212632' : '#ffffff',
       borderColor: dark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.85)',
       boxShadow: dark
         ? '0 12px 36px 0 rgba(0, 0, 0, 0.5), inset 0 1px 1px 0 rgba(255, 255, 255, 0.15)'

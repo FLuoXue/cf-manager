@@ -31,7 +31,7 @@
           :status="item.exhausted ? 'error' : progressStatus(item)"
         />
       </div>
-      <div v-if="!hasResources" style="color: var(--app-text-disabled); font-size: 13px;">{{ t('compactCard.noData') }}</div>
+      <div v-if="!hasResources" style="color: var(--app-text-tertiary); font-size: 13px;">{{ t('compactCard.noData') }}</div>
     </div>
   </n-popover>
 </template>
@@ -193,7 +193,9 @@ const hasResources = computed(() => props.resources && props.resources.length > 
 }
 
 .compact-card__popover-value {
-  color: var(--app-text-disabled);
+  /* 用量数值属于关键信息，用可读的次级文字色（此前是 disabled 色，浅色下几乎看不见） */
+  color: var(--app-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 768px) {

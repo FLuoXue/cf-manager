@@ -43,7 +43,7 @@
             <!-- 回答内容 -->
             <div style="white-space: pre-wrap;">{{ msg.content }}</div>
             <!-- 加载中 -->
-            <div v-if="msg.loading" style="color: var(--app-text-disabled);">
+            <div v-if="msg.loading" style="color: var(--app-text-tertiary);">
               <n-spin size="small" /> {{ t('ai.thinking') }}
             </div>
           </div>
