@@ -105,6 +105,7 @@ export const useAccountStore = defineStore('accounts', () => {
     email: string | null;
     api_token: string | null;
     api_key: string | null;
+    password: string | null;
     proxy_url: string;
     proxy_enabled: number;
   };

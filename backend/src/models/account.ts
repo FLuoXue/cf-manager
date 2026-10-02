@@ -10,6 +10,8 @@ export interface Account {
   auth_type: 'token' | 'global_key';
   api_token: string | null;
   api_key: string | null;
+  /** 登录密码备注：仅人工留存与查看，程序不参与任何鉴权 */
+  password: string | null;
   email: string | null;
   account_id: string | null;
   is_active: number;
@@ -27,6 +29,8 @@ export interface AccountInput {
   auth_type: 'token' | 'global_key';
   api_token?: string | null;
   api_key?: string | null;
+  /** 登录密码备注（调用方需自行加密后传入） */
+  password?: string | null;
   email?: string | null;
   account_id?: string;
   enabled_features?: string;
@@ -137,7 +141,7 @@ export function getAccountById(id: number): Account | undefined {
 export function createAccount(input: AccountInput): number {
   const features = input.enabled_features || ALL_FEATURES.join(',');
   const stmt = getDb().prepare(
-    'INSERT INTO accounts (name, auth_type, api_token, api_key, email, account_id, enabled_features, worker_plan, proxy_url, proxy_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO accounts (name, auth_type, api_token, api_key, email, account_id, enabled_features, password, worker_plan, proxy_url, proxy_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   const result = stmt.run(
     input.name,
@@ -147,6 +151,7 @@ export function createAccount(input: AccountInput): number {
     input.email || null,
     input.account_id || null,
     features,
+    input.password || null,
     normalizeWorkerPlan(input.worker_plan),
     input.proxy_url || '',
     input.proxy_enabled ?? 0
@@ -162,6 +167,7 @@ export function updateAccount(id: number, input: Partial<AccountInput>): void {
     auth_type: 'auth_type',
     api_token: 'api_token',
     api_key: 'api_key',
+    password: 'password',
     email: 'email',
     account_id: 'account_id',
     available_features: 'available_features',

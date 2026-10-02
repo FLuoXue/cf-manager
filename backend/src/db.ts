@@ -30,6 +30,7 @@ export function initDb(): void {
       is_active       INTEGER DEFAULT 1,
       enabled_features TEXT DEFAULT 'ai,workers,browser_render,dns,storage',
       available_features TEXT DEFAULT '',
+      password        TEXT,
       worker_plan     TEXT DEFAULT 'free',
       proxy_url       TEXT DEFAULT '',
       proxy_enabled   INTEGER DEFAULT 0,
@@ -123,12 +124,13 @@ const MIGRATIONS: Migration[] = [
   { version: '0005_accounts_proxy_enabled', table: 'accounts', column: 'proxy_enabled', sql: "ALTER TABLE accounts ADD COLUMN proxy_enabled INTEGER DEFAULT 0;" },
   { version: '0006_quota_optimistic', table: 'quota_usage', column: 'optimistic', sql: "ALTER TABLE quota_usage ADD COLUMN optimistic INTEGER DEFAULT 0;" },
   { version: '0007_quota_exhausted', table: 'quota_usage', column: 'exhausted', sql: "ALTER TABLE quota_usage ADD COLUMN exhausted INTEGER DEFAULT 0;" },
-  // 移除从未在界面上使用的 accounts.password（登录密码）：旧库该列存在则删除，
-  // 新库基础建表已不含该列，columnExists 为假直接跳过（见 applyMigrations 的 drop 分支）。
-  { version: '0008_accounts_drop_password', table: 'accounts', column: 'password', kind: 'drop', sql: "ALTER TABLE accounts DROP COLUMN password;" },
   // worker_plan：账号的 Cloudflare Workers 计划类型（'free' 默认 / 'paid' / 'enterprise'），
   // 用于把付费模型只路由到付费账号；不标即免费。与 worker/src/db/migrations/0010_accounts_worker_plan.sql 对应。
   { version: '0010_accounts_worker_plan', table: 'accounts', column: 'worker_plan', sql: "ALTER TABLE accounts ADD COLUMN worker_plan TEXT DEFAULT 'free';" },
+  // accounts.password（登录密码）：仅作人工留存的备注字段，程序不参与任何鉴权。
+  // 注：上游 v2.2.0 曾以 0008_accounts_drop_password 删除该列，本实例刻意不执行该删列迁移，
+  // 旧库中已有的密码数据原样保留；对确实已删列的库（曾部署过上游 2.2.0+）本迁移退化为加一个空列。
+  { version: '0011_accounts_password', table: 'accounts', column: 'password', sql: "ALTER TABLE accounts ADD COLUMN password TEXT;" },
 ];
 
 function columnExists(db: Database.Database, table: string, column: string): boolean {

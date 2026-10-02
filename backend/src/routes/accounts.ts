@@ -58,6 +58,7 @@ router.get('/', (req: Request, res: Response, next: NextFunction) => {
         ...a,
         api_token: a.api_token ? '***encrypted***' : null,
         api_key: a.api_key ? '***encrypted***' : null,
+        password: a.password ? '***encrypted***' : null,
         is_demo: isDemoAccountId(a.id),
       }));
       res.json({ accounts, quota, total: paged.total, counts: paged.counts });
@@ -66,6 +67,7 @@ router.get('/', (req: Request, res: Response, next: NextFunction) => {
         ...a,
         api_token: a.api_token ? '***encrypted***' : null,
         api_key: a.api_key ? '***encrypted***' : null,
+        password: a.password ? '***encrypted***' : null,
         is_demo: isDemoAccountId(a.id),
       }));
       res.json({ accounts, quota });
@@ -112,6 +114,8 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     const input: AccountInput = { name, auth_type, account_id, enabled_features: req.body.enabled_features, worker_plan: normalizeWorkerPlan(req.body.worker_plan), proxy_url: req.body.proxy_url, proxy_enabled: req.body.proxy_enabled };
+    // 登录密码（备注用途，不参与鉴权）：非空才写入，加密落库
+    if (req.body.password) input.password = encrypt(String(req.body.password));
     if (auth_type === 'token') {
       input.api_token = encrypt(api_token);
     } else {
@@ -150,7 +154,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 
     clearCache();
     createAuditLog(id, 'create_account', name, `auth_type=${auth_type}`, 'success');
-    res.status(201).json({ id, ...input, api_token: '***', api_key: '***' });
+    res.status(201).json({ id, ...input, api_token: '***', api_key: '***', password: input.password ? '***' : null });
   } catch (err) { next(err); }
 });
 
@@ -188,6 +192,11 @@ router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
     // 计划类型（free / paid / enterprise）由人工标注，随时可改；缺省/非法值落回 free
     if (req.body.worker_plan !== undefined) {
       input.worker_plan = normalizeWorkerPlan(req.body.worker_plan);
+    }
+
+    // 登录密码（备注用途，不参与鉴权）：留空表示不修改，加密后落库
+    if (req.body.password) {
+      input.password = encrypt(String(req.body.password));
     }
 
     if (auth_type === 'token') {
@@ -316,9 +325,11 @@ router.get('/:id/credentials', (req: Request, res: Response, next: NextFunction)
     if (!account) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Account not found' } }); return; }
     let api_token: string | null = null;
     let api_key: string | null = null;
+    let password: string | null = null;
     try {
       if (account.api_token) api_token = decrypt(account.api_token);
       if (account.api_key) api_key = decrypt(account.api_key);
+      if (account.password) password = decrypt(account.password);
     } catch (e) {
       appLogger.error(`[Account] 解密凭证失败 id=${id}: ${e}`);
       res.status(500).json({ error: { code: 'DECRYPT_ERROR', message: '凭证解密失败' } });
@@ -332,6 +343,7 @@ router.get('/:id/credentials', (req: Request, res: Response, next: NextFunction)
       email: account.email,
       api_token,
       api_key,
+      password,
       account_id: account.account_id,
       proxy_url: account.proxy_url || '',
       proxy_enabled: account.proxy_enabled || 0,
@@ -572,6 +584,7 @@ router.post('/batch/proxy', (req: Request, res: Response, next: NextFunction) =>
 // 列集与 POST /import-csv 严格对齐，导出文件可直接再导入（迁移到其他实例）：
 //   name,email,globalKey                  常驻列（globalKey = Cloudflare Global API Key，即库内 accounts.api_key）
 //   apiToken                              仅当导出范围内存在 token 认证账户时追加（该类型无邮箱，无法用 globalKey 表示）
+//   password                              登录密码备注（明文，仅人工留存，程序不参与鉴权）
 // 演示（Demo）部署下整体禁用：导出会把账户清单与凭证一并带出，与演示实例的只读定位冲突
 // 查询参数：
 //   ids=1,2,3                                    仅导出指定账户（优先级高于 filter）
@@ -604,22 +617,25 @@ router.get('/export-csv', (req: Request, res: Response, next: NextFunction) => {
 
     // 2) 组装 CSV
     const hasTokenAccount = accounts.some(a => a.auth_type === 'token' && !!a.api_token);
-    const header = ['name', 'email', 'globalKey', ...(hasTokenAccount ? ['apiToken'] : [])];
+    const header = ['name', 'email', 'globalKey', ...(hasTokenAccount ? ['apiToken'] : []), 'password'];
     const lines: string[] = [header.join(',')];
     for (const a of accounts) {
       let apiKey = '';
       let apiToken = '';
+      let password = '';
       // 演示账户凭证受保护，始终置空
       if (includeCredentials && !isDemoAccountId(a.id)) {
         try {
           if (a.api_key) apiKey = decrypt(a.api_key);
           if (a.api_token) apiToken = decrypt(a.api_token);
+          if (a.password) password = decrypt(a.password);
         } catch (e) {
           appLogger.warn(`[Account:Export] 解密凭证失败 id=${a.id}，该行凭证留空: ${e}`);
         }
       }
       const cells = [a.name, a.email || '', apiKey];
       if (hasTokenAccount) cells.push(apiToken);
+      cells.push(password);
       lines.push(cells.map(toCsvCell).join(','));
     }
 
@@ -658,10 +674,11 @@ function toCsvCell(value: string | number | null | undefined): string {
 }
 
 // ============ 批量导入 CSV ============
-// 支持列（仅认下列 4 个列名，大小写不敏感，其余列一律忽略）：
+// 支持列（仅认下列 5 个列名，大小写不敏感，其余列一律忽略）：
 //   email + globalKey     global_key 账户（常驻）；globalKey = Global API Key，落库到 accounts.api_key
 //   apiToken              token 账户（无邮箱也可），与 globalKey 同时存在时以 globalKey 为准
 //   name                  账户名（可选，缺省由邮箱推导）
+//   password              登录密码备注（可选，仅人工留存，程序不参与鉴权）
 // GET /export-csv 的导出文件可直接回灌，实现跨实例迁移
 // 去重：global_key 按邮箱，token 按 apiToken（密文含随机 IV，需解密后比对）；单个账户错误不影响其他行
 router.post('/import-csv', uploadCsv.single('file'), async (req: Request, res: Response, next: NextFunction) => {
@@ -683,6 +700,7 @@ router.post('/import-csv', uploadCsv.single('file'), async (req: Request, res: R
     const apiKeyIdx = col('globalkey');
     const apiTokenIdx = col('apitoken');
     const nameIdx = col('name');
+    const passwordIdx = col('password');
 
     if (apiKeyIdx === -1 && apiTokenIdx === -1) {
       res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'CSV 必须包含 globalKey 或 apiToken 列' } });
@@ -707,6 +725,7 @@ router.post('/import-csv', uploadCsv.single('file'), async (req: Request, res: R
       apiKey: string;
       apiToken: string;
       name: string;
+      password: string;
       result: { email: string; name: string; status: 'success' | 'skipped' | 'error'; message?: string };
     }
     const pendingTasks: ImportTask[] = [];
@@ -716,6 +735,7 @@ router.post('/import-csv', uploadCsv.single('file'), async (req: Request, res: R
       const email = cell(emailIdx);
       const apiKey = cell(apiKeyIdx);
       const apiToken = cell(apiTokenIdx);
+      const password = cell(passwordIdx);
       // token 认证（只有 apiToken）允许没有邮箱，故名称兜底为占位名
       const authType: 'token' | 'global_key' = !apiKey && apiToken ? 'token' : 'global_key';
       const name = cell(nameIdx) || (email ? nameFromEmail(email) : `未命名账户-${i + 1}`);
@@ -749,14 +769,14 @@ router.post('/import-csv', uploadCsv.single('file'), async (req: Request, res: R
       }
 
       pendingTasks.push({
-        authType, email, apiKey, apiToken, name,
+        authType, email, apiKey, apiToken, name, password,
         result: { email, name, status: 'success' },
       });
     }
 
     // 处理单个任务：验证凭证 + 入库 + 自动获取 account_id
     async function processTask(task: ImportTask): Promise<void> {
-      const { authType, email, apiKey, apiToken, name } = task;
+      const { authType, email, apiKey, apiToken, name, password } = task;
       try {
         // 验证 Cloudflare 凭证（可跳过）
         if (!skipVerify) {
@@ -782,6 +802,7 @@ router.post('/import-csv', uploadCsv.single('file'), async (req: Request, res: R
         };
         if (authType === 'token') input.api_token = encrypt(apiToken);
         else input.api_key = encrypt(apiKey);
+        if (password) input.password = encrypt(password);
         const id = createAccount(input);
 
         // 自动获取 account_id（跳过验证模式下也尝试获取，失败不阻断）

@@ -90,6 +90,15 @@
           <n-select v-model:value="form.worker_plan" :options="workerPlanOptions" style="width: 180px" />
           <n-text depth="3" style="margin-left: 8px; font-size: 12px">{{ t('accounts.workerPlanHint') }}</n-text>
         </n-form-item>
+        <n-form-item :label="t('accounts.password')">
+          <n-input
+            v-model:value="form.password"
+            type="password"
+            show-password-on="click"
+            :placeholder="editingId === null ? t('accounts.passwordPlaceholder') : t('accounts.passwordEditPlaceholder')"
+          />
+          <n-text depth="3" style="margin-left: 8px; font-size: 12px">{{ t('accounts.passwordHint') }}</n-text>
+        </n-form-item>
       </n-form>
       <template #action>
         <n-button @click="showAddModal = false">{{ t('common.cancel') }}</n-button>
@@ -255,6 +264,15 @@
             <n-descriptions-item v-if="credData.auth_type === 'global_key'" :label="t('accounts.apiKey')">
               <n-input
                 :value="credData.api_key || ''"
+                type="password"
+                show-password-on="click"
+                readonly
+                :style="{ fontFamily: 'monospace' }"
+              />
+            </n-descriptions-item>
+            <n-descriptions-item :label="t('accounts.password')">
+              <n-input
+                :value="credData.password || ''"
                 type="password"
                 show-password-on="click"
                 readonly
@@ -438,6 +456,7 @@ const credData = ref<{
   email: string | null;
   api_token: string | null;
   api_key: string | null;
+  password: string | null;
   proxy_url: string;
   proxy_enabled: number;
 } | null>(null);
@@ -515,6 +534,7 @@ const form = ref({
   email: '',
   features: ['ai', 'workers', 'browser_render', 'dns', 'storage'] as string[],
   worker_plan: 'free',
+  password: '',
 });
 
 const authTypeOptions = computed(() => [
@@ -530,7 +550,7 @@ const workerPlanOptions = computed(() => [
 ]);
 
 function resetForm() {
-  form.value = { name: '', auth_type: 'token', api_token: '', api_key: '', email: '', features: ['ai', 'workers', 'browser_render', 'dns', 'storage'], worker_plan: 'free' };
+  form.value = { name: '', auth_type: 'token', api_token: '', api_key: '', email: '', features: ['ai', 'workers', 'browser_render', 'dns', 'storage'], worker_plan: 'free', password: '' };
 }
 
 async function handleSubmit() {
@@ -549,6 +569,8 @@ async function handleSubmit() {
     if (rest.api_key) payload.api_key = rest.api_key;
     if (rest.email) payload.email = rest.email;
   }
+    // 登录密码备注：留空表示不修改（程序不参与鉴权，仅供人工留存）
+    if (rest.password) payload.password = rest.password;
   if (editingId.value === null) {
       // 添加模式：凭证必填（后端校验）
       await accountStore.createAccount({ ...payload, enabled_features: features.join(',') });
@@ -576,6 +598,7 @@ function openAccountEditor(row: any) {
     email: '',
     features: parseFeatures(row.enabled_features),
     worker_plan: row.worker_plan || 'free',
+    password: '',
   };
   showAddModal.value = true;
 }

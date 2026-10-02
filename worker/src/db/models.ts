@@ -4,6 +4,8 @@ export interface Account {
   auth_type: 'token' | 'global_key';
   api_token: string | null;
   api_key: string | null;
+  /** 登录密码备注：仅人工留存与查看，程序不参与任何鉴权 */
+  password: string | null;
   email: string | null;
   account_id: string | null;
   is_active: number;
@@ -151,12 +153,14 @@ export async function getAccountById(db: D1Database, id: number): Promise<Accoun
 
 export async function createAccount(db: D1Database, data: {
   name: string; auth_type: string; api_token?: string; api_key?: string;
+  password?: string;
   email?: string; account_id?: string; enabled_features?: string; worker_plan?: string; proxy_url?: string; proxy_enabled?: number;
 }): Promise<number> {
   const res = await db.prepare(
-    'INSERT INTO accounts (name, auth_type, api_token, api_key, email, account_id, enabled_features, worker_plan, proxy_url, proxy_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO accounts (name, auth_type, api_token, api_key, email, account_id, enabled_features, password, worker_plan, proxy_url, proxy_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(data.name, data.auth_type, data.api_token || null, data.api_key || null,
     data.email || null, data.account_id || null, data.enabled_features || 'ai,workers,browser_render,dns,storage',
+    data.password || null,
     normalizeWorkerPlan(data.worker_plan),
     data.proxy_url || '', data.proxy_enabled ?? 0).run();
   return res.meta.last_row_id;
