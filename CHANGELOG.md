@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.5.0] - 2026-10-02
+
+### ✨ 新功能
+
+- **新增公开定价端点 `GET /api/pricing`（双端对称，无需鉴权）**：把 `shared/model-pricing.json` 转换为 new-api 的 Type 2 格式，供 new-api 同步倍率。覆盖全部模型类型——文本模型（`quota_type=0`）输出 `model_ratio` / `completion_ratio`，音频等按次计费模型（`quota_type=1`）输出 `model_price`，图像模型（`quota_type=2`）输出 `image_ratio`；带缓存定价的模型额外输出 `cache_ratio`。Express（`backend/src/routes/pricing.ts`）与 Hono（`worker/src/routes/pricing.ts`）实现一致，挂在鉴权中间件之前，因此外部系统可直接读取。
+- **恢复 `accounts.password`（登录密码）字段，并在前端查看与编辑**：该字段定位为人工留存的备注，**程序不参与任何鉴权**，落库前与其它凭证一样用 AES-256-GCM 加密。
+  - **数据库**：backend 基础建表加回该列并新增迁移 `0011_accounts_password`；worker 同步 `schema.sql` 与 `migrations/0011_accounts_password.sql`。
+  - **接口（双端对称）**：创建/编辑账号接受 `password`（非空才写入），`GET /api/accounts/:id/credentials` 解密返回；账号列表以 `***encrypted***` 掩码，不下发密文。
+  - **CSV**：「导出 CSV」新增 `password` 列（明文，随「包含凭证」开关）；「导入 CSV」识别 `password` 列并加密入库，导出文件可直接回灌。
+  - **前端**：新增/编辑账号弹窗新增「登录密码」输入框（可点击显示），「查看 API 凭证」弹窗新增对应展示行；编辑时留空表示不修改当前值。补齐中英文文案。
+
+### ⚠️ 升级说明
+
+- 本版本**不执行**移除 `accounts.password` 的删列迁移（上游 backend `0008_accounts_drop_password`、worker `0009_accounts_drop_password.sql` 均已移除），旧库中已有的密码数据会原样保留；仅当该列确实缺失时，由新迁移 `0011` 补回一个空列。
+
 ## [2.4.1] - 2026-09-29
 
 ### 🐞 修复与优化
