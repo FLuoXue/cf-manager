@@ -4,16 +4,10 @@ import { proxyFetch, buildCurlCommand } from './proxyService';
 import { fetchScriptSafely } from './ssrfGuard';
 import { appLogger } from './logger';
 import { computeStaticAssetHash, getContentType, extractZipFiles } from './staticAssets';
+import { buildMultipartBody, type MultipartPart } from './deploy/uploadForm';
 export { extractZipFiles };
 export * from './pagesService';
 export * from './workerConfig';
-
-// Node Buffer to Uint8Array for multipart serialization
-function bufferToBlobPart(buf: Buffer) {
-  const view = new Uint8Array(buf.byteLength);
-  view.set(buf);
-  return view;
-}
 
 
 
@@ -145,19 +139,25 @@ async function deployWorkerAssets(
   let completionJwt = sessionJwt;
   for (let bi = 0; bi < buckets.length; bi++) {
     const bucket = buckets[bi];
-    const upForm = new FormData();
+    const uploadParts: MultipartPart[] = [];
     for (const hash of bucket) {
       const buf = hashToBuffer.get(hash);
       if (!buf) {
         appLogger.warn(`[Worker Assets] Hash ${hash} not found in local files, skipping`);
         continue;
       }
-      upForm.append(hash, new Blob([buf.toString('base64')], { type: getContentType(hashToPath.get(hash) || '') }), hash);
+      uploadParts.push({
+        name: hash,
+        filename: hash,
+        contentType: getContentType(hashToPath.get(hash) || ''),
+        content: buf.toString('base64'),
+      });
     }
+    const { body: uploadBody, contentType: uploadContentType } = buildMultipartBody(uploadParts);
     const upResp = await proxyFetch(`${CF_BASE}/accounts/${accountId}/workers/assets/upload?base64=true`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${completionJwt}`, 'User-Agent': 'wrangler/4.112.0' },
-      body: upForm,
+      headers: { 'Content-Type': uploadContentType, Authorization: `Bearer ${completionJwt}`, 'User-Agent': 'wrangler/4.112.0' },
+      body: uploadBody,
     }, 300000, undefined, account);
     if (!upResp.ok) {
       const txt = await upResp.text();
@@ -280,10 +280,12 @@ export async function deployWorker(
   // 与这里的模块上传是两条独立通道，不要在此排除 assets/。
   const moduleFiles = moduleParts;
 
-  // Use raw fetch + FormData (same as Cloudflare wrangler does)
-  // The SDK's scripts.update can mangle the multipart form in some versions
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  // 手工拼 multipart（buildMultipartBody）：走代理时 proxyFetch 会切到 node-fetch@2，
+  // 而 node-fetch 无法序列化 undici 的 FormData，会把它变成 "[object FormData]" + text/plain，
+  // CF 直接 415 code 10001 拒收。
+  const uploadParts: MultipartPart[] = [
+    { name: 'metadata', contentType: 'application/json', content: JSON.stringify(metadata) },
+  ];
 
   if (moduleFiles && moduleFiles.length > 0) {
     // 多模块：zip 解压出的每个文件一个 files= part，main_module 指向入口文件
@@ -292,15 +294,24 @@ export async function deployWorker(
     }
     for (const m of moduleFiles) {
       const isJs = /\.(m?js|cjs)$/i.test(m.path);
-      form.append(m.path, new Blob([bufferToBlobPart(m.buffer)], { type: isJs ? 'application/javascript+module' : getContentType(m.path) }), m.path);
+      uploadParts.push({
+        name: m.path,
+        filename: m.path,
+        contentType: isJs ? 'application/javascript+module' : getContentType(m.path),
+        content: m.buffer,
+      });
     }
   } else {
     // 单模块（默认）：兼容旧路径，脚本内容即 worker.js
-    const contentBytes = typeof scriptContent === 'string'
-      ? new TextEncoder().encode(scriptContent)
-      : new Uint8Array(scriptContent);
-    form.append('worker.js', new Blob([contentBytes], { type: 'application/javascript+module' }), 'worker.js');
+    uploadParts.push({
+      name: 'worker.js',
+      filename: 'worker.js',
+      contentType: 'application/javascript+module',
+      content: typeof scriptContent === 'string' ? Buffer.from(scriptContent, 'utf-8') : scriptContent,
+    });
   }
+
+  const { body: formBody, contentType: formContentType } = buildMultipartBody(uploadParts);
 
   // 版本化优先（对齐 Store 部署通道 workerDeploy.ts）：
   // 版本化 worker 下传统 PUT 的 metadata.bindings 会被 CF 忽略，必须用 Versions API 提交才能让 vars/bindings 生效。
@@ -313,8 +324,8 @@ export async function deployWorker(
   if (checkResp.status === 404) {
     const createResp = await proxyFetch(`${CF_BASE}/accounts/${accountId}/workers/scripts/${name}`, {
       method: 'PUT',
-      headers: { ...authHeaders, 'User-Agent': 'wrangler/4.112.0' },
-      body: form,
+      headers: { 'Content-Type': formContentType, ...authHeaders, 'User-Agent': 'wrangler/4.112.0' },
+      body: formBody,
     }, 300000, undefined, account);
     respJson = await createResp.json() as any;
     if (!createResp.ok || !respJson.success) {
@@ -327,8 +338,8 @@ export async function deployWorker(
     // 已存在：优先 Versions API（版本化 worker 下 bindings 才能生效）
     const versionResp = await proxyFetch(`${CF_BASE}/accounts/${accountId}/workers/scripts/${name}/versions?bindings_inherit=strict`, {
       method: 'POST',
-      headers: { ...authHeaders, 'User-Agent': 'wrangler/4.112.0' },
-      body: form,
+      headers: { 'Content-Type': formContentType, ...authHeaders, 'User-Agent': 'wrangler/4.112.0' },
+      body: formBody,
     }, 300000, undefined, account);
     const versionJson = await versionResp.json() as any;
     if (versionResp.ok && versionJson.success) {
@@ -338,8 +349,8 @@ export async function deployWorker(
       appLogger.warn(`[Worker Deploy] Versions API unavailable for ${name} (${versionResp.status}), falling back to PUT`);
       const putResp = await proxyFetch(`${CF_BASE}/accounts/${accountId}/workers/scripts/${name}`, {
         method: 'PUT',
-        headers: { ...authHeaders, 'User-Agent': 'wrangler/4.112.0' },
-        body: form,
+        headers: { 'Content-Type': formContentType, ...authHeaders, 'User-Agent': 'wrangler/4.112.0' },
+        body: formBody,
       }, 300000, undefined, account);
       respJson = await putResp.json() as any;
       if (!putResp.ok || !respJson.success) {

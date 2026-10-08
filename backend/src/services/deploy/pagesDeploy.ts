@@ -3,6 +3,7 @@ import { getDeployHeaders } from './headers';
 import { computeStaticAssetHash, getContentType } from '../staticAssets';
 import { appLogger } from '../logger';
 import { proxyFetch } from '../proxyService';
+import { buildMultipartBody, type MultipartPart } from './uploadForm';
 
 const CF_BASE = 'https://api.cloudflare.com/client/v4';
 const MAX_RETRIES = 3;
@@ -316,58 +317,66 @@ export async function deployPages(
   }
 
   // Step 4: 创建 deployment（与 wrangler 保持一致：可选字段仅在存在时添加）
-  const formData = new FormData();
-  formData.append('manifest', JSON.stringify(manifest));
+  // 手工拼 multipart（buildMultipartBody）：走代理时 proxyFetch 会切到 node-fetch@2，
+  // 它无法序列化 undici 的 FormData（body 变成 "[object FormData]"、Content-Type 变成
+  // text/plain），会被 Cloudflare 以 415 拒收。
+  const uploadParts: MultipartPart[] = [
+    { name: 'manifest', content: JSON.stringify(manifest) },
+  ];
 
   if (opts.branch) {
-    formData.append('branch', opts.branch);
+    uploadParts.push({ name: 'branch', content: opts.branch });
   }
 
   if (opts.commitMessage) {
-    formData.append('commit_message', opts.commitMessage.length > 384
-      ? opts.commitMessage.slice(0, 384)
-      : opts.commitMessage);
+    uploadParts.push({
+      name: 'commit_message',
+      content: opts.commitMessage.length > 384 ? opts.commitMessage.slice(0, 384) : opts.commitMessage,
+    });
   }
 
   if (opts.commitHash) {
-    formData.append('commit_hash', opts.commitHash);
+    uploadParts.push({ name: 'commit_hash', content: opts.commitHash });
   }
 
   if (opts.commitDirty !== undefined) {
-    formData.append('commit_dirty', String(opts.commitDirty));
+    uploadParts.push({ name: 'commit_dirty', content: String(opts.commitDirty) });
   }
 
   for (const sf of specialFiles) {
     if (sf.name === '_worker.bundle') {
       // _worker.bundle 文件本身就是 wrangler 预先序列化好的 multipart/form-data 二进制
-      // 直接作为 Blob 原样上传，不要重新包装！
-      const view = new Uint8Array(sf.buffer.byteLength);
-      view.set(sf.buffer);
-      formData.append(sf.name, new Blob([view], { type: 'application/octet-stream' }), sf.name);
+      // 直接作为文件 part 原样上传，不要重新包装！
+      uploadParts.push({ name: sf.name, filename: sf.name, contentType: 'application/octet-stream', content: sf.buffer });
     } else if (sf.name === '_worker.js') {
-      // _worker.js 是单文件 JS 入口，需要包装为 FormData(metadata + module)
-      const innerForm = new FormData();
-      innerForm.set('metadata', JSON.stringify({ main_module: '_worker.js' }));
-      innerForm.set('_worker.js', new File([sf.buffer.toString('utf-8')], '_worker.js'));
-      const wrappedBlob = await new Response(innerForm).blob();
-      formData.append(sf.name, wrappedBlob, sf.name);
+      // _worker.js 是单文件 JS 入口，需要包装为内层 multipart(metadata + module)。
+      // 内层类型用紧凑写法（multipart/form-data;boundary=...），与 wrangler 上传的字节一致。
+      const inner = buildMultipartBody([
+        { name: 'metadata', content: JSON.stringify({ main_module: '_worker.js' }) },
+        { name: '_worker.js', filename: '_worker.js', contentType: 'application/octet-stream', content: sf.buffer.toString('utf-8') },
+      ]);
+      uploadParts.push({
+        name: sf.name,
+        filename: sf.name,
+        contentType: `multipart/form-data;boundary=${inner.boundary}`,
+        content: inner.body,
+      });
     } else if (TEXT_SPECIAL_FILES.has(sf.name)) {
       // _routes.json / _headers / _redirects / functions-filepath-routing-config.json
-      // 全部 UTF-8 字符串 → new File([string])
-      const text = sf.buffer.toString('utf-8');
-      formData.append(sf.name, new File([text], sf.name));
+      // 全部 UTF-8 字符串；无 MIME 的 File 在 multipart 里按 octet-stream 发送
+      uploadParts.push({ name: sf.name, filename: sf.name, contentType: 'application/octet-stream', content: sf.buffer.toString('utf-8') });
     } else {
-      const view = new Uint8Array(sf.buffer.byteLength);
-      view.set(sf.buffer);
-      formData.append(sf.name, new Blob([view], { type: sf.contentType }), sf.name);
+      uploadParts.push({ name: sf.name, filename: sf.name, contentType: sf.contentType, content: sf.buffer });
     }
   }
+
+  const { body: deployBody, contentType: deployContentType } = buildMultipartBody(uploadParts);
 
   const deployResp = await withRetry(() =>
     proxyFetch(`${CF_BASE}/accounts/${accountId}/pages/projects/${name}/deployments`, {
       method: 'POST',
-      headers: { ...deployHeaders },
-      body: formData,
+      headers: { 'Content-Type': deployContentType, ...deployHeaders },
+      body: deployBody,
     }, 300000, undefined, account),
   );
   const deployJson = await deployResp.json() as any;

@@ -3,6 +3,7 @@ import { getDeployHeaders } from './headers';
 import { computeStaticAssetHash, getContentType } from '../staticAssets';
 import { appLogger } from '../logger';
 import { proxyFetch } from '../proxyService';
+import { buildMultipartBody, type MultipartPart } from './uploadForm';
 
 const CF_BASE = 'https://api.cloudflare.com/client/v4';
 const MAX_RETRIES = 3;
@@ -91,7 +92,10 @@ export async function deployWorkerAssets(
   let completionJwt = sessionJwt;
   for (let bi = 0; bi < buckets.length; bi++) {
     const bucket = buckets[bi];
-    const upForm = new FormData();
+    // 手工拼 multipart（buildMultipartBody）：走代理时 proxyFetch 会切到 node-fetch@2，
+    // 它无法序列化 undici 的 FormData（body 变成 "[object FormData]"、Content-Type 变成
+    // text/plain），会被 Cloudflare 以 415 拒收。
+    const uploadParts: MultipartPart[] = [];
     for (const hash of bucket) {
       const buf = hashToBuffer.get(hash);
       if (!buf) {
@@ -101,14 +105,19 @@ export async function deployWorkerAssets(
       // MIME 类型至关重要：CF 按此值设置响应 Content-Type。
       // 用 octet-stream 会导致浏览器拒绝加载 JS 模块。
       const filePath = hashToPath.get(hash) || '';
-      const ct = getContentType(filePath);
-      upForm.append(hash, new Blob([buf.toString('base64')], { type: ct }), hash);
+      uploadParts.push({
+        name: hash,
+        filename: hash,
+        contentType: getContentType(filePath),
+        content: buf.toString('base64'),
+      });
     }
+    const { body: uploadBody, contentType: uploadContentType } = buildMultipartBody(uploadParts);
     const upResp = await withRetry(() =>
       proxyFetch(`${CF_BASE}/accounts/${accountId}/workers/assets/upload?base64=true`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${completionJwt}`, 'User-Agent': 'wrangler/4.112.0' },
-        body: upForm,
+        headers: { 'Content-Type': uploadContentType, Authorization: `Bearer ${completionJwt}`, 'User-Agent': 'wrangler/4.112.0' },
+        body: uploadBody,
       }, 300000, undefined, account),
     );
     if (!upResp.ok) {

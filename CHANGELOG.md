@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.5.1] - 2026-10-02
+
+### 🐞 修复与优化
+
+- **修复开启代理后脚本与资源上传被 Cloudflare 以 415 拒绝的问题**：Worker 脚本部署（`POST /api/workers/batch-deploy`）、Worker 静态资源（assets 桶）上传与 Pages 项目部署此前都用 `FormData` 作为请求体、且不显式声明 `Content-Type`。不走代理时由 undici 自动序列化为 multipart，一切正常；一旦该账户启用代理（设置页代理开关 / `PROXY_URL` / 账户专属代理 / Resin），`proxyFetch` 会改用 `node-fetch@2`，而 node-fetch v2 无法序列化 undici 的 `FormData` —— body 退化为字符串 `[object FormData]`、`Content-Type` 变成 `text/plain`，Cloudflare 直接返回 `415 code 10001`（Content-Type must be one of: application/javascript, text/javascript, multipart/form-data）。
+  - **统一改用手工拼装 multipart**：新增通用 `buildMultipartBody()`（`backend/src/services/deploy/uploadForm.ts`），`createWorkerUploadForm` 改为复用它；四条上传通道（legacy `workerService` 的脚本上传与 assets 桶上传、`deploy/assetsUpload.ts` 的 assets 桶上传、`deploy/pagesDeploy.ts` 的 Pages 部署）全部改为手工拼字节并显式声明 `Content-Type`，不再依赖 undici 的自动序列化，因此代理开启与否行为一致。
+  - **序列化与原有行为逐字节一致**：纯字符串字段不写 `Content-Type` 行、无 MIME 的文件按 `application/octet-stream` 发送、Pages `_worker.js` 的内层 multipart 声明保持 `multipart/form-data;boundary=...` 紧凑写法，均与改动前 undici/wrangler 的输出在 boundary 归一化后完全相同。
+  - **回归测试**：新增 `backend/tests/workerUploadForm.test.ts`（含经由 node-fetch 的传输层用例）与 `backend/tests/workerDeployUpload.test.ts`（驱动真实 `deployWorker`，断言代理通道下发的是 multipart `Buffer`）。
+
 ## [2.5.0] - 2026-10-02
 
 ### ✨ 新功能
